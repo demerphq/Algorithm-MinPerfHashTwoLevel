@@ -1,20 +1,18 @@
 Algorithm-MinPerfHashTwoLevel version 0.01
 ==========================================
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+This distribution contains two modules, Algorith::MinPerfHashTwoLevel
+which can construct a "two level" minimal perfect hash in an abstract
+form, and Tie::Hash::MinPerfHashTwoLevel::OnDisk which uses the
+abstract representation to create an ondisk image of the hash which
+can be efficiently mounted via mmap, allowing memory efficient access
+to the hash by multiple processes at the same time.
 
-A README file is required for CPAN modules since CPAN extracts the
-README file from a module distribution so that people browsing the
-archive can use it get an idea of the modules uses. It is usually a
-good idea to provide version information here so that people can
-decide whether fixes for the module are worth downloading.
+Requires a 64 bit operating environment, and a little endian CPU.
 
 INSTALLATION
 
-To install this module type the following:
+To install these modules type the following:
 
    perl Makefile.PL
    make
@@ -23,13 +21,10 @@ To install this module type the following:
 
 DEPENDENCIES
 
-This module requires these other modules and libraries:
-
-  blah blah blah
+This module requires a 64 bit build environment, a C compiler and a
+little endian CPU.
 
 COPYRIGHT AND LICENCE
-
-Put the correct copyright and licence information here.
 
 Copyright (C) 2019 by Yves Orton
 
