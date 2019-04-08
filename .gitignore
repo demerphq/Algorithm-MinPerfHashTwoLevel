@@ -10,3 +10,4 @@ Makefile.old
 *.btrn
 *.srl
 MANIFEST.bak
+*.gz
