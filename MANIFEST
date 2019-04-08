@@ -3,13 +3,9 @@ lib/Algorithm/MinPerfHashTwoLevel.pm
 lib/Tie/Hash/MinPerfHashTwoLevel/OnDisk.pm
 Makefile.PL
 MANIFEST
-MinPerfHashTwoLevel.bs
-MinPerfHashTwoLevel.c
-MinPerfHashTwoLevel.o
 MinPerfHashTwoLevel.xs
 ppport.h
 README
 stadtx_hash.h
-t/_run.pl
 t/Algorithm-MinPerfHashTwoLevel.t
 t/OnDisk.t
