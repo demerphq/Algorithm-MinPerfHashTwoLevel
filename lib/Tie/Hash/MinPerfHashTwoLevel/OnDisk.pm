@@ -330,6 +330,66 @@ created with, etc.
 
 =back
 
+=head2 FILE FORMAT
+
+Currently there is only one file format, version 0.
+
+The file structure consists of a header, followed by a byte vector of seed/state
+data for the hash function, followed by a bucket table with records of a fixed size,
+followed by a bitvector of the flags for the keys with two bits per key,
+followed by a bitvector of flags for values with one bit per value, followed by a
+string table containing the comment for the file and the strings it contains.
+The key flags may be 0 for "latin-1/not-utf8", 1 for "is-utf8", and 2 for "was-utf8"
+which is used for keys which can be represented as latin-1, but should be restored
+as unicode/utf8. The val flags are similar but do not (need to) support "was-utf8".
+
+Structure:
+
+    Header
+    Hash-state
+    Bucket-table
+    Key flags
+    Val flags
+    Strings
+
+Header:
+
+    U32 magic_num       -> 1278363728 -> "PH2L"
+    U32 version         -> 0
+    U32 num_buckets     -> number of buckets/keys in hash
+    U32 state_ofs       -> offset in file where hash preseeded state is found
+    U32 table_ofs       -> offset in file where bucket table starts
+    U32 key_flags_ofs   -> offset in file where key flags are located
+    U32 val_flags ofs   -> offset in file where val flags are located
+    U32 str_buf_ofs     -> offset in file where strings are located
+    U64 table_checksum  -> hash value checksum of table and key/val flags
+    U64 str_buf_checksum-> hash value checksum of string data
+
+All "_ofs" members in the header are aligned on 16 byte boundaries and
+may be right padded with nulls if necessary to make them a multiple of 16 bytes
+long, including the string buffer.
+
+The string buffer contains the comment at str_buf_ofs+1, its length can be found
+with strlen(), the comment may NOT contain nulls, and will be null terminated. All
+other strings in the table are NOT null padded, the length data stored in the
+bucket records should be used to determine the length of the keys and values.
+
+The table_checksum is the hash (using the seed/state data stored at state_ofs)
+of the data in the file from table_ofs to str_buf_ofs, eg it includes the
+key_flags bit vector and val_flags bit vector. The str_buf_checksum is
+similar but of the data from the str_buf_ofs to the end of the file.
+
+Buckets:
+
+   U32 xor_val      -> the xor_val for this bucket's h1 lookups (0 means none)
+   U32 key_ofs      -> offset from str_buf_ofs to find this key (nonzero always)
+   U32 val_ofs      -> offset from str_buf_ofs to find this value (0 means undef)
+   U16 key_len      -> length of key
+   U16 val_len      -> length of value
+
+The hash function used is stadtx hash, which uses a 16 byte seed to produce
+a 32 byte state vector.
+
 =head2 EXPORT
 
 None by default.
