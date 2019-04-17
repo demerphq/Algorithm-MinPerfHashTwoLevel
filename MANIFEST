@@ -7,5 +7,6 @@ MinPerfHashTwoLevel.xs
 ppport.h
 README
 stadtx_hash.h
-t/Algorithm-MinPerfHashTwoLevel.t
+t/Algo_v0.t
+t/Algo_v1.t
 t/OnDisk.t
