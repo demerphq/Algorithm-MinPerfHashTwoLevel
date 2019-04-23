@@ -12,6 +12,13 @@
 #include <sys/stat.h>
 #include <assert.h>
 
+#ifndef STADTX_SEED_BYTES
+#define STADTX_SEED_BYTES (sizeof(U64) * 2)
+#endif
+#ifndef STADTX_STATE_BYTES
+#define STADTX_STATE_BYTES (sizeof(U64) * 4)
+#endif
+
 struct mph_header {
     U32 magic_num;
     U32 variant;
