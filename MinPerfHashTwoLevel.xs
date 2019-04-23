@@ -181,7 +181,7 @@ hash_with_state(str_sv,state_sv)
     U8 *str_pv= (U8 *)SvPV(str_sv,str_len);
     state_pv= (U8 *)SvPV(state_sv,state_len);
     if (state_len != STADTX_STATE_BYTES) {
-        croak("state vector must be at exactly %d bytes",STADTX_SEED_BYTES);
+        croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
     }
     RETVAL= stadtx_hash_with_state(state_pv,str_pv,str_len);
 }
