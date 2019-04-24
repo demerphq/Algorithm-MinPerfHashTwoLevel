@@ -77,7 +77,7 @@ STMT_START {                                            \
 } STMT_END
 
 int
-lookup_bucket(struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
+lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
 {
     struct mph_bucket *bucket;
     U8 *strs;
@@ -96,7 +96,7 @@ lookup_bucket(struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
 }
 
 int
-lookup_key(struct mph_header *mph, SV *key_sv, SV *val_sv)
+lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
 {
     U8 *strs= (U8 *)mph + mph->str_buf_ofs;
     struct mph_bucket *buckets= (struct mph_bucket *) ((char *)mph + mph->table_ofs);
@@ -143,7 +143,7 @@ lookup_key(struct mph_header *mph, SV *key_sv, SV *val_sv)
 }
 
 void
-mph_mmap(char *file, struct mph_obj *obj) {
+mph_mmap(pTHX_ char *file, struct mph_obj *obj) {
     struct stat st;
     int fd = open(file, O_RDONLY, 0);
     void *ptr;
@@ -320,7 +320,7 @@ mount_file(file_sv)
     struct mph_obj obj;
     STRLEN file_len;
     char *file_pv= SvPV(file_sv,file_len);
-    mph_mmap(file_pv,&obj);
+    mph_mmap(aTHX_ file_pv,&obj);
     RETVAL= newSVpvn((char *)&obj,sizeof(struct mph_obj));
     SvPOK_on(RETVAL);
     SvREADONLY_on(RETVAL);
@@ -364,7 +364,7 @@ fetch_by_index(mount_sv,index,...)
     SV* val_sv= items > 3 ? ST(3) : NULL;
     if (items > 4)
        croak_xs_usage(cv,  "mount_sv, index, key_sv, val_sv");
-    RETVAL= lookup_bucket(obj->header,index,key_sv,val_sv);    
+    RETVAL= lookup_bucket(aTHX_ obj->header,index,key_sv,val_sv);
 }
     OUTPUT:
         RETVAL
@@ -380,7 +380,7 @@ fetch_by_key(mount_sv,key_sv,...)
     struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
     if (items > 3)
        croak_xs_usage(cv,  "mount_sv, index, key_sv");
-    RETVAL= lookup_key(obj->header,key_sv,val_sv);
+    RETVAL= lookup_key(aTHX_ obj->header,key_sv,val_sv);
 }
     OUTPUT:
         RETVAL
