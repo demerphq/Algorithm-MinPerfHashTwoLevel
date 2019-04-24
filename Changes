@@ -1,5 +1,9 @@
 Revision history for Perl extension Algorithm::MinPerfHashTwoLevel.
 
+0.06  Wds Apr 24 CEST 2019
+    Fix building for FreeBSD. - Thanks to Slaven Slaven Rezić for the
+    various reports which lead to v0.06 and v0.05.
+
 0.05  Wds Apr 24 CEST 2019
     Fix building under threaded perls.
 
