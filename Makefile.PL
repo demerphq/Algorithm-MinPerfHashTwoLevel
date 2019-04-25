@@ -2,15 +2,15 @@ use ExtUtils::MakeMaker;
 use strict;
 use warnings;
 no warnings 'portable';
+use Config;
 
-os_unsupported() if $^O eq 'MSWin32';
+os_unsupported() unless $Config{d_mmap}; # we use mmap
 die "requires 64-bit integer support (little-endian)\n"
     unless eval {
         my $int= 0x1234567801234567;
         my $str= "gE#\1xV4\22";
         my $packed= pack "Q", $int;
         my $unpacked= unpack "Q", $str;
-
         (($packed eq $str) && ($unpacked eq $int))
     };
 # See lib/ExtUtils/MakeMaker.pm for details of how to influence
