@@ -138,30 +138,34 @@ sub make_file {
 
     my $key_flags= "\0" x _bytes(0+@$buckets,4);
     my $val_flags= "\0" x _bytes(0+@$buckets,8);
-    my $table_buf= "";
-    my $str_buf= "\0" . $comment . "\0";
-    my %string_ofs;
-    my $add_buf= sub {
-        my ($str,$add_null)= @_;
-        return 0 unless defined $str;
-        return $string_ofs{$str} //= do {
-            my $ofs= length $str_buf;
-            $str_buf .= $str;
-            $ofs;
-        };
-    };
+    my $str_buf= "\0\0" . $comment . "\0";
+    my %string_ofs=(""=>1);
+    my @data;
     foreach my $bucket (@$buckets) {
-        $bucket->{xor_val} //= 0;
         vec($key_flags,$bucket->{idx},2) = $bucket->{key_is_utf8};
         vec($val_flags,$bucket->{idx},1) = $bucket->{val_is_utf8};
-        my $key_len= $bucket->{key_normalized_len}= length($bucket->{key_normalized});
-        my $val_len= $bucket->{val_normalized_len}= length($bucket->{val_normalized});
+        my $key_normalized= $bucket->{key_normalized};
+        my $val_normalized= $bucket->{val_normalized};
+
+        my $key_len= length($key_normalized);
+        my $val_len= defined($val_normalized) ? length($val_normalized) : 0;
         die "Cannot encode a key longer than 2^16-1 bytes" if $key_len > UINT16_MAX;
         die "Cannot encode a val longer than 2^16-1 bytes" if $val_len > UINT16_MAX;
-        $bucket->{key_ofs} //= $add_buf->($bucket->{key_normalized});
-        $bucket->{val_ofs} //= $add_buf->($bucket->{val_normalized});
-        $table_buf .= pack "LLLSS", @{$bucket}{qw(xor_val key_ofs val_ofs key_normalized_len val_normalized_len)};
+
+        my $key_ofs = ($string_ofs{$key_normalized} //= do {
+                my $ofs= length $str_buf;
+                $str_buf .= $key_normalized;
+                $ofs
+            });
+        my $val_ofs = (!defined($val_normalized) ? 0 : ( $string_ofs{$val_normalized} //= do {
+                my $ofs= length $str_buf;
+                $str_buf .= $val_normalized;
+                $ofs
+            }));
+
+        push @data, $bucket->{xor_val} // 0, $key_ofs, $val_ofs, $key_len, $val_len;
     }
+    my $table_buf= pack"(LLLSS)*", @data;
 
     my $state= $hasher->state;
 

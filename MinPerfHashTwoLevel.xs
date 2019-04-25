@@ -173,6 +173,25 @@ mph_munmap(struct mph_obj *obj) {
     close(obj->fd);
 }
 
+void
+normalize_with_flags(pTHX_ SV *sv, SV *normalized_sv, SV *is_utf8_sv, int downgrade) {
+    if (SvROK(sv)) {
+        croak("not expecting a reference in downgrade_with_flags()");
+    }
+    sv_setsv(normalized_sv,sv);
+    if (SvPOK(sv) && SvUTF8(sv)) {
+        if (downgrade)
+            sv_utf8_downgrade(normalized_sv,1);
+        if (SvUTF8(normalized_sv)) {
+            SvUTF8_off(normalized_sv);
+            sv_setiv(is_utf8_sv,1);
+        } else {
+            sv_setiv(is_utf8_sv,2);
+        }
+    } else {
+        sv_setiv(is_utf8_sv, 0);
+    }
+}
 
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel		
 
@@ -192,6 +211,56 @@ hash_with_state(str_sv,state_sv)
         croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
     }
     RETVAL= stadtx_hash_with_state(state_pv,str_pv,str_len);
+}
+    OUTPUT:
+        RETVAL
+
+UV
+hash_with_state_normalized(key_sv,key_normalized_sv,key_is_utf8_sv,val_sv,val_normalized_sv,val_is_utf8_sv,idx1_sv,h2_packed_av,state_sv,n_sv)
+        SV* key_sv
+        SV* key_normalized_sv
+        SV* key_is_utf8_sv
+        SV* val_sv
+        SV* val_normalized_sv
+        SV* val_is_utf8_sv
+        SV* idx1_sv
+        AV* h2_packed_av
+        SV* state_sv
+        SV* n_sv
+    PROTOTYPE: $$$$$$$@$$
+    CODE:
+{
+    U8 *key_pv;
+    STRLEN key_len;
+    U8 *state_pv;
+    STRLEN state_len;
+    U64 h0;
+    U32 h1;
+    U32 h2;
+    U32 idx1;
+    SV **got_psv;
+
+    normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
+    normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+
+    key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
+    state_pv= (U8 *)SvPV(state_sv,state_len);
+    if (state_len != STADTX_STATE_BYTES) {
+        croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
+    }
+    h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
+    h1= h0 >> 32;
+    h2= h0 & 0xFFFFFFFF;
+    idx1= h1 % SvUV(n_sv);
+    sv_setuv(idx1_sv, idx1);
+    got_psv= av_fetch(h2_packed_av,idx1,1);
+    if (!got_psv)
+        croak("panic, out of memory?");
+    if (!SvPOK(*got_psv))
+        sv_setpvs(*got_psv,"");
+    sv_catpvn(*got_psv, (char *)&h2, 4); 
+
+    RETVAL = h0;
 }
     OUTPUT:
         RETVAL
@@ -283,6 +352,7 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
         } else {
             *idx_start= pos;
             pos = -pos-1;
+            if (0) used[pos]= 1;
             RETVAL= (U32)pos;
         }
     } else {
@@ -310,6 +380,13 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
                 idx_ptr++;
             }
             RETVAL= xor_val;
+            if (0) {
+                U32 *i= idx_start;
+                while (i < idx_ptr) {
+                    used[*i] = 1;
+                    i++;
+                }
+            }
             break;
         }
     }
