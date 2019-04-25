@@ -182,7 +182,7 @@ sub _compute_first_level_inner {
             $size_count++;
         }
         my $idx_sv;
-        my $xor_val= calc_xor_val($max_xor_val,$h2_buckets[$idx1],$idx_sv,$used_sv,$used_pos);
+        my $xor_val= calc_xor_val($max_xor_val, $h2_buckets[$idx1], $idx_sv, $used_sv, $used_pos);
 
         if ($xor_val) {
             
@@ -195,7 +195,6 @@ sub _compute_first_level_inner {
                 my $key_info= $keys->[$i];
                 my $idx2= $idx2[$i];
 
-                substr($used_sv,$idx2,1,"\1");
                 my $h2_bucket= $buckets[$idx2];
                 if ($h2_bucket) {
                     $key_info->{$_}= $h2_bucket->{$_} 

@@ -330,7 +330,7 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
     U32 xor_val= 0;
     STRLEN h2_strlen;
     STRLEN bucket_count;
-    char *used= SvPV(used_sv,bucket_count);
+    char *used= SvPV_force(used_sv,bucket_count);
     U32 *h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
     STRLEN h2_count= h2_strlen / sizeof(U32);
     U32 *h2_end= h2_start + h2_count;
@@ -351,8 +351,8 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
             RETVAL= 0;
         } else {
             *idx_start= pos;
+            used[pos]= 1;
             pos = -pos-1;
-            if (0) used[pos]= 1;
             RETVAL= (U32)pos;
         }
     } else {
@@ -379,14 +379,15 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
                 h2_ptr++;
                 idx_ptr++;
             }
-            RETVAL= xor_val;
-            if (0) {
+            {
+                /* update used */
                 U32 *i= idx_start;
                 while (i < idx_ptr) {
                     used[*i] = 1;
                     i++;
                 }
             }
+            RETVAL= xor_val;
             break;
         }
     }
