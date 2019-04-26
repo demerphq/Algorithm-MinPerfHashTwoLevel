@@ -1,5 +1,6 @@
 Revision history for Perl extension Algorithm::MinPerfHashTwoLevel.
 
+
 0.08  Thurs Apr 25, 2019
     Better build refusal logic.
 
