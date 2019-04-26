@@ -50,7 +50,7 @@ sub new {
     my $o= bless \%opts, $class;
     $o->{state} = seed_state($o->{seed})
         if $o->{seed};
-    $o->{variant} //= $DEFAULT_VARIANT;
+    $o->{variant}= $DEFAULT_VARIANT unless defined $o->{variant};
     $o->{variant}= int(0+$o->{variant});
     die "Unknown variant '$o->{variant}' in constructor new()"
         if ($o->{variant} > 1);
@@ -103,7 +103,7 @@ sub __compute_max_xor_val {
     # then we can set it to UINT32_MAX.
     my $n_bits= sprintf "%b", $n;
     my $n_bits_sum= 0;
-    $n_bits_sum += $_ for split //, $n_bits;
+    $n_bits_sum += $_ for split m//, $n_bits;
     if ($n_bits_sum == 1) {
         return $n;
     } else {

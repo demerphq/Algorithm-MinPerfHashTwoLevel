@@ -449,7 +449,8 @@ fetch_by_index(mount_sv,index,...)
     SV* key_sv= items > 2 ? ST(2) : NULL;
     SV* val_sv= items > 3 ? ST(3) : NULL;
     if (items > 4)
-       croak_xs_usage(cv,  "mount_sv, index, key_sv, val_sv");
+       croak("Error: passed too many arguments to "
+             "Tie::Hash::MinPerfHashTwoLevel::OnDisk::fetch_by_index(mount_sv, index, key_sv, val_sv)");
     RETVAL= lookup_bucket(aTHX_ obj->header,index,key_sv,val_sv);
 }
     OUTPUT:
@@ -465,7 +466,8 @@ fetch_by_key(mount_sv,key_sv,...)
     SV* val_sv= items > 2 ? ST(2) : NULL;
     struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
     if (items > 3)
-       croak_xs_usage(cv,  "mount_sv, index, key_sv");
+       croak("Error: passed too many arguments to "
+             "Tie::Hash::MinPerfHashTwoLevel::OnDisk::fetch_by_key(mount_sv, index, key_sv)");
     RETVAL= lookup_key(aTHX_ obj->header,key_sv,val_sv);
 }
     OUTPUT:

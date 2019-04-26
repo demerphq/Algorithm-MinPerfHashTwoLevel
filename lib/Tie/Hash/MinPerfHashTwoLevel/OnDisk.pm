@@ -117,9 +117,12 @@ sub make_file {
         or die "file is a mandatory option to make_file";
     my $source_hash= $opts{source_hash}
         or die "source_hash is a mandatory option to make_file";
-    my $comment= $opts{comment} // "";
+    $opts{comment}= "" unless defined $opts{comment};
+    $opts{variant}= $DEFAULT_VARIANT unless defined $opts{variant};
+    
+    my $comment= $opts{comment};
     my $debug= $opts{debug} || 0;
-    my $variant= int($opts{variant} // $DEFAULT_VARIANT);
+    my $variant= int($opts{variant});
     die "Unknown file variant $variant" if $variant > 1 or $variant < 0;
 
     die "comment cannot contain null"
@@ -152,18 +155,18 @@ sub make_file {
         die "Cannot encode a key longer than 2^16-1 bytes" if $key_len > UINT16_MAX;
         die "Cannot encode a val longer than 2^16-1 bytes" if $val_len > UINT16_MAX;
 
-        my $key_ofs = ($string_ofs{$key_normalized} //= do {
+        my $key_ofs = ($string_ofs{$key_normalized} ||= do {
                 my $ofs= length $str_buf;
                 $str_buf .= $key_normalized;
                 $ofs
             });
-        my $val_ofs = (!defined($val_normalized) ? 0 : ( $string_ofs{$val_normalized} //= do {
+        my $val_ofs = (!defined($val_normalized) ? 0 : ( $string_ofs{$val_normalized} ||= do {
                 my $ofs= length $str_buf;
                 $str_buf .= $val_normalized;
                 $ofs
             }));
 
-        push @data, $bucket->{xor_val} // 0, $key_ofs, $val_ofs, $key_len, $val_len;
+        push @data, $bucket->{xor_val} || 0, $key_ofs, $val_ofs, $key_len, $val_len;
     }
     my $table_buf= pack"(LLLSS)*", @data;
 
