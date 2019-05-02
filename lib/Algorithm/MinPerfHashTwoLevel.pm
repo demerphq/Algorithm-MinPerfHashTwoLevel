@@ -139,18 +139,8 @@ sub _compute_first_level_inner {
             $val, $val_normalized, $val_is_utf8,
             $idx1, \@h2_buckets,
             $state,
-            $n
+            $n, \@key_buckets
         );
-       
-        push @{$key_buckets[$idx1]}, {
-            h0 => $h0,
-            key => $key,
-            key_normalized => $key_normalized,
-            key_is_utf8 => $key_is_utf8,
-            val => $val,
-            val_normalized => $val_normalized,
-            val_is_utf8 => $val_is_utf8,
-        };
     }
 
     my @buckets;
@@ -162,39 +152,14 @@ sub _compute_first_level_inner {
         } grep {
             defined $h2_buckets[$_]
         } (0 .. ($n-1));
-    my $last_size= -1;
-    my $size_count= 0;
     my $used_pos= $variant == 1 ? 0 : undef;
 
-    while (@idx1) {
-        my $idx1= shift @idx1;
-        my $keys= $key_buckets[$idx1];
-        my $num_keys= 0+@$keys;
-        if ($debug) {
-            if ($last_size != $num_keys) {
-                $last_size= $num_keys;
-                if ($size_count) {
-                    printf " (%d times)\n", $size_count;
-                }
-                printf "crunching buckets with %d keys", $num_keys;
-                $size_count= 0;
-            }
-            $size_count++;
-        }
-        my $idx_sv;
-        my $xor_val= calc_xor_val($max_xor_val, $h2_buckets[$idx1], $idx_sv, $used_sv, $used_pos,
-            $idx1, \@buckets, $keys);
+    my $bad_idx= calc_xor_val($n, $max_xor_val, $used_pos, \@idx1, \@buckets, \@key_buckets, \@h2_buckets);
 
-        unless ($xor_val) {
-            printf " (%d completed, %d remaining)\nIndex '%d' not solved: %s\n",
-                $size_count,0+@idx1,$idx1,join ",", map { "'$_'" } "@$keys"
-                if $debug;
-            return;
-        }
+    if ($bad_idx) {
+        printf " Index '%d' not solved.\n", $bad_idx-1;
+        return;
     }
-
-    printf " (%d times)\n", $size_count
-        if $debug && $size_count;
 
     $self->{buckets}= \@buckets;
     return \@buckets;

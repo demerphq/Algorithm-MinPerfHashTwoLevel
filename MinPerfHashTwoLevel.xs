@@ -27,11 +27,17 @@
 #endif
 #endif
 
-#define MPH_KEYSV_IDX 0
-#define MPH_KEYSV_H1_KEYS 1
-#define MPH_KEYSV_XOR_VAL 2
-
-#define COUNT_MPH_KEYSV 3
+#define MPH_KEYSV_IDX               0
+#define MPH_KEYSV_H1_KEYS           1
+#define MPH_KEYSV_XOR_VAL           2
+#define MPH_KEYSV_H0                3
+#define MPH_KEYSV_KEY               4
+#define MPH_KEYSV_KEY_NORMALIZED    5
+#define MPH_KEYSV_KEY_IS_UTF8       6
+#define MPH_KEYSV_VAL               7
+#define MPH_KEYSV_VAL_NORMALIZED    8
+#define MPH_KEYSV_VAL_IS_UTF8       9
+#define COUNT_MPH_KEYSV 10
 
 typedef struct {
     SV *sv;
@@ -249,6 +255,13 @@ BOOT:
     MPH_INIT_KEYSV(MPH_KEYSV_IDX,"idx");
     MPH_INIT_KEYSV(MPH_KEYSV_H1_KEYS,"h1_keys");
     MPH_INIT_KEYSV(MPH_KEYSV_XOR_VAL,"xor_val");
+    MPH_INIT_KEYSV(MPH_KEYSV_H0,"h0");
+    MPH_INIT_KEYSV(MPH_KEYSV_KEY,"key");
+    MPH_INIT_KEYSV(MPH_KEYSV_KEY_NORMALIZED,"key_normalized");
+    MPH_INIT_KEYSV(MPH_KEYSV_KEY_IS_UTF8,"key_is_utf8");
+    MPH_INIT_KEYSV(MPH_KEYSV_VAL,"val");
+    MPH_INIT_KEYSV(MPH_KEYSV_VAL_NORMALIZED,"val_normalized");
+    MPH_INIT_KEYSV(MPH_KEYSV_VAL_IS_UTF8,"val_is_utf8");
   }
 }
 
@@ -273,7 +286,7 @@ hash_with_state(str_sv,state_sv)
         RETVAL
 
 UV
-hash_with_state_normalized(key_sv,key_normalized_sv,key_is_utf8_sv,val_sv,val_normalized_sv,val_is_utf8_sv,idx1_sv,h2_packed_av,state_sv,n_sv)
+hash_with_state_normalized(key_sv,key_normalized_sv,key_is_utf8_sv,val_sv,val_normalized_sv,val_is_utf8_sv,idx1_sv,h2_packed_av,state_sv,n_sv,keybuckets_av)
         SV* key_sv
         SV* key_normalized_sv
         SV* key_is_utf8_sv
@@ -284,6 +297,7 @@ hash_with_state_normalized(key_sv,key_normalized_sv,key_is_utf8_sv,val_sv,val_no
         AV* h2_packed_av
         SV* state_sv
         SV* n_sv
+        AV* keybuckets_av
     PROTOTYPE: $$$$$$$@$$
     CODE:
 {
@@ -315,7 +329,37 @@ hash_with_state_normalized(key_sv,key_normalized_sv,key_is_utf8_sv,val_sv,val_no
         croak("panic, out of memory?");
     if (!SvPOK(*got_psv))
         sv_setpvs(*got_psv,"");
-    sv_catpvn(*got_psv, (char *)&h2, 4); 
+    sv_catpvn(*got_psv, (char *)&h2, 4);
+
+    {
+        AV *av;
+        SV *ref_sv= newSViv(0);
+        HV *hv= newHV();
+        
+        got_psv= av_fetch(keybuckets_av,idx1,1);
+        if (!got_psv)
+            croak("oom");
+        
+        if (!SvROK(*got_psv)) {
+            av= newAV();
+            SvRV_set(*got_psv,(SV *)av);
+            SvROK_on(*got_psv);
+        } else {
+            av= (AV *)SvRV(*got_psv);
+        }
+
+        SvRV_set(ref_sv,(SV*)hv);
+        SvROK_on(ref_sv);
+        av_push(av,ref_sv);
+        hv_ksplit(hv,10);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            SvREFCNT_inc_simple_NN(key_sv));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, SvREFCNT_inc_simple_NN(key_normalized_sv));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    SvREFCNT_inc_simple_NN(key_is_utf8_sv));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, SvREFCNT_inc_simple_NN(val_normalized_sv));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    SvREFCNT_inc_simple_NN(val_is_utf8_sv));
+    }
 
     RETVAL = h0;
 }
@@ -374,133 +418,164 @@ seed_state(base_seed_sv)
     OUTPUT:
         RETVAL
 
-U32
-calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos,idx1,buckets_av,keys_av)
+UV
+calc_xor_val(bucket_count,max_xor_val,used_pos_sv,idx1_av,buckets_av,keybuckets_av,h2_buckets_av)
+    U32 bucket_count
     U32 max_xor_val
-    SV *h2_sv
-    SV *idx_sv
-    SV *used_sv
-    SV *used_pos
-    U32 idx1
+    SV *used_pos_sv
+    AV *idx1_av
     AV *buckets_av
-    AV *keys_av
+    AV *keybuckets_av
+    AV *h2_buckets_av
     PREINIT:
         dMY_CXT;
-    PROTOTYPE: $$$$$$\@\@
+    PROTOTYPE: $$$\@\@\@\@
     CODE:
 {
-    U32 xor_val= 0;
-    STRLEN h2_strlen;
-    STRLEN bucket_count;
-    char *used= SvPV_force(used_sv,bucket_count);
-    U32 *h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
-    STRLEN h2_count= h2_strlen / sizeof(U32);
-    U32 *h2_end= h2_start + h2_count;
-    U32 *idx_start;
-    
-    sv_grow(idx_sv,h2_strlen);
-    SvCUR_set(idx_sv,h2_strlen);
+    U32 idx1_idx;
+    U32 top_idx1= av_top_index(idx1_av);
+
+    U32 idx1;
+    SV *h2_sv;
+    AV *keys_av;
+
+    SV *idx_sv= sv_2mortal(newSV(20));
+    char *used;
+    Newxz(used,bucket_count,char);
+    SAVEFREEPV(used);
     SvPOK_on(idx_sv);
-    idx_start= (U32 *)SvPVX(idx_sv);
+    SvCUR_set(idx_sv,0);
+    RETVAL = 0;
 
-    if (h2_count == 1 && SvOK(used_pos)) {
-        I32 pos= SvIV(used_pos);
-        while (pos < bucket_count && used[pos]) {
-            pos++;
-        }
-        SvIV_set(used_pos,pos);
-        if (pos == bucket_count) {
-            RETVAL= 0;
-        } else {
-            *idx_start= pos;
-            pos = -pos-1;
-            RETVAL= (U32)pos;
-        }
-    } else {
-        next_xor_val:
-        while (1) {
-            U32 *h2_ptr= h2_start;
-            U32 *idx_ptr= idx_start;
-            if (xor_val == max_xor_val) {
-                RETVAL= 0;
-                break;
-            } else {
-                xor_val++;
-            }
-            while (h2_ptr < h2_end) {
-                U32 i= (*h2_ptr ^ xor_val) % bucket_count;
-                U32 *check_idx;
-                if (used[i])
-                    goto next_xor_val;
-                for (check_idx= idx_start; check_idx < idx_ptr; check_idx++) {
-                    if (*check_idx == i)
-                        goto next_xor_val;
+    for (idx1_idx=0; idx1_idx <= top_idx1; idx1_idx++) {
+        SV **got= av_fetch(idx1_av, idx1_idx, 0);
+        if (!got)
+            croak("wtf? no element?");
+        idx1= SvUV(*got);
+
+        got= av_fetch(h2_buckets_av, idx1, 0);
+        if (!got)
+            croak("wtf? no h2_buckets?");
+        h2_sv= *got;
+
+        got= av_fetch(keybuckets_av, idx1, 0);
+        if (!got)
+            croak("wtf? no keybuckets_av?");
+        keys_av= (AV *)SvRV(*got);
+
+        {
+            U32 xor_val= 0;
+            STRLEN h2_strlen;
+            U32 *h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
+            STRLEN h2_count= h2_strlen / sizeof(U32);
+            U32 *h2_end= h2_start + h2_count;
+            U32 *idx_start;
+
+            SvGROW(idx_sv,h2_strlen);
+            SvCUR_set(idx_sv,h2_strlen);
+            idx_start= (U32 *)SvPVX(idx_sv);
+
+            if (h2_count == 1 && SvOK(used_pos_sv)) {
+                I32 pos= SvIV(used_pos_sv);
+                while (pos < bucket_count && used[pos]) {
+                    pos++;
                 }
-                *idx_ptr= i;
-                h2_ptr++;
-                idx_ptr++;
-            }
-            RETVAL= xor_val;
-            break;
-        }
-    }
-    if (RETVAL) {
-        U32 *idx2= idx_start;
-        U32 *idx_end= idx_start + h2_count;
-        HV *idx1_hv;
-        U32 i= 0;
-
-        SV **buckets_rvp= av_fetch(buckets_av, idx1, 1);
-        if (!buckets_rvp) croak("out of memory?");
-        if (!SvROK(*buckets_rvp)) {
-            idx1_hv= newHV();
-            if (!idx1_hv) croak("out of memory");
-            sv_upgrade(*buckets_rvp,SVt_RV);
-            SvRV_set(*buckets_rvp,(SV *)idx1_hv);
-            SvROK_on(*buckets_rvp);
-        } else {
-             idx1_hv= (HV *)SvRV(*buckets_rvp);
-        }
-
-        hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_XOR_VAL,RETVAL);
-        hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_H1_KEYS,h2_count);
-
-        /* update used */
-        while (idx2 < idx_end) {
-            HV *idx2_hv;
-            HV *keys_hv;
-
-            SV **keys_rvp;
-            SV **buckets_rvp;
-
-            keys_rvp= av_fetch(keys_av, i, 0);
-            if (!keys_rvp) croak("no key_info in bucket %d", i);
-            keys_hv= (HV *)SvRV(*keys_rvp);
-
-            buckets_rvp= av_fetch(buckets_av, *idx2, 1);
-            if (!buckets_rvp) croak("out of memory?");
-
-            if (!SvROK(*buckets_rvp)) {
-                sv_upgrade(*buckets_rvp,SVt_RV);
+                SvIV_set(used_pos_sv,pos);
+                if (pos == bucket_count) {
+                    xor_val= 0;
+                } else {
+                    *idx_start= pos;
+                    pos = -pos-1;
+                    xor_val= (U32)pos;
+                }
             } else {
-                idx2_hv= (HV *)SvRV(*buckets_rvp);
-
-                hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_XOR_VAL);
-                hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_H1_KEYS);
-                SvREFCNT_dec(idx2_hv);
+                next_xor_val:
+                while (1) {
+                    U32 *h2_ptr= h2_start;
+                    U32 *idx_ptr= idx_start;
+                    if (xor_val == max_xor_val) {
+                        xor_val= 0;
+                        break;
+                    } else {
+                        xor_val++;
+                    }
+                    while (h2_ptr < h2_end) {
+                        U32 i= (*h2_ptr ^ xor_val) % bucket_count;
+                        U32 *check_idx;
+                        if (used[i])
+                            goto next_xor_val;
+                        for (check_idx= idx_start; check_idx < idx_ptr; check_idx++) {
+                            if (*check_idx == i)
+                                goto next_xor_val;
+                        }
+                        *idx_ptr= i;
+                        h2_ptr++;
+                        idx_ptr++;
+                    }
+                    break;
+                }
             }
+            if (xor_val) {
+                U32 *idx2= idx_start;
+                U32 *idx_end= idx_start + h2_count;
+                HV *idx1_hv;
+                U32 i= 0;
 
-            SvRV_set(*buckets_rvp,(SV*)keys_hv);
-            SvROK_on(*buckets_rvp);
-            SvREFCNT_inc(keys_hv);
+                SV **buckets_rvp= av_fetch(buckets_av, idx1, 1);
+                if (!buckets_rvp) croak("out of memory?");
+                if (!SvROK(*buckets_rvp)) {
+                    idx1_hv= newHV();
+                    if (!idx1_hv) croak("out of memory");
+                    sv_upgrade(*buckets_rvp,SVt_RV);
+                    SvRV_set(*buckets_rvp,(SV *)idx1_hv);
+                    SvROK_on(*buckets_rvp);
+                } else {
+                     idx1_hv= (HV *)SvRV(*buckets_rvp);
+                }
 
-            hv_setuv_with_keysv(keys_hv,MPH_KEYSV_IDX,*idx2);
+                hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_XOR_VAL,xor_val);
+                hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_H1_KEYS,h2_count);
 
-            used[*idx2] = 1;
-            idx2++;
-            i++;
+                /* update used */
+                while (idx2 < idx_end) {
+                    HV *idx2_hv;
+                    HV *keys_hv;
+
+                    SV **keys_rvp;
+                    SV **buckets_rvp;
+
+                    keys_rvp= av_fetch(keys_av, i, 0);
+                    if (!keys_rvp) croak("no key_info in bucket %d", i);
+                    keys_hv= (HV *)SvRV(*keys_rvp);
+
+                    buckets_rvp= av_fetch(buckets_av, *idx2, 1);
+                    if (!buckets_rvp) croak("out of memory?");
+
+                    if (!SvROK(*buckets_rvp)) {
+                        sv_upgrade(*buckets_rvp,SVt_RV);
+                    } else {
+                        idx2_hv= (HV *)SvRV(*buckets_rvp);
+
+                        hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_XOR_VAL);
+                        hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_H1_KEYS);
+                        SvREFCNT_dec(idx2_hv);
+                    }
+
+                    SvRV_set(*buckets_rvp,(SV*)keys_hv);
+                    SvROK_on(*buckets_rvp);
+                    SvREFCNT_inc(keys_hv);
+
+                    hv_setuv_with_keysv(keys_hv,MPH_KEYSV_IDX,*idx2);
+
+                    used[*idx2] = 1;
+                    idx2++;
+                    i++;
+                }
+            } else {
+                RETVAL = idx1 + 1;
+                break;
+            }
         }
-
     }
 }
     OUTPUT:
