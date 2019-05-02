@@ -19,6 +19,55 @@
 #define STADTX_STATE_BYTES (sizeof(U64) * 4)
 #endif
 
+#ifndef MPH_MAP_POPULATE
+#ifdef MAP_POPULATE
+#define MPH_MAP_POPULATE MAP_POPULATE
+#else
+#define MPH_MAP_POPULATE MAP_PREFAULT_READ
+#endif
+#endif
+
+#define MPH_KEYSV_IDX 0
+#define MPH_KEYSV_H1_KEYS 1
+#define MPH_KEYSV_XOR_VAL 2
+
+#define COUNT_MPH_KEYSV 3
+
+typedef struct {
+    SV *sv;
+    U32 hash;
+} sv_with_hash;
+
+typedef struct {
+    sv_with_hash keysv[COUNT_MPH_KEYSV];
+} my_cxt_t;
+
+#define MPH_INIT_KEYSV(idx, str) STMT_START {                           \
+    MY_CXT.keysv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
+    PERL_HASH(MY_CXT.keysv[idx].hash, (str ""), (sizeof(str) - 1));     \
+} STMT_END
+
+#define hv_fetch_ent_with_keysv(hv,keysv_idx,lval)                      \
+    hv_fetch_ent(hv,MY_CXT.keysv[keysv_idx].sv,lval,MY_CXT.keysv[keysv_idx].hash);
+
+#define hv_store_ent_with_keysv(hv,keysv_idx,val_sv)                    \
+    hv_store_ent(hv,MY_CXT.keysv[keysv_idx].sv,val_sv,MY_CXT.keysv[keysv_idx].hash);
+
+#define hv_copy_with_keysv(hv1,hv2,keysv_idx) STMT_START {              \
+    HE *got_he= hv_fetch_ent_with_keysv(hv1,keysv_idx,0);               \
+    if (got_he) {                                                       \
+        SV *got_sv= HeVAL(got_he);                                      \
+        hv_store_ent_with_keysv(hv2,keysv_idx,got_sv);                  \
+        SvREFCNT_inc(got_sv);                                           \
+    }                                                                   \
+} STMT_END
+
+#define hv_setuv_with_keysv(hv,keysv_idx,uv)                            \
+STMT_START {                                                            \
+    HE *got_he= hv_fetch_ent_with_keysv(hv,keysv_idx,1);                \
+    if (got_he) sv_setuv(HeVAL(got_he),uv);                             \
+} STMT_END
+
 struct mph_header {
     U32 magic_num;
     U32 variant;
@@ -50,6 +99,8 @@ struct mph_obj {
     struct mph_header *header;
     int fd;
 };
+
+
 
 #define sv_set_from_bucket(sv,strs,ofs,len,idx,flags,bits) \
 STMT_START {                                            \
@@ -142,14 +193,6 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     }
 }
 
-#ifndef MPH_MAP_POPULATE
-#ifdef MAP_POPULATE
-#define MPH_MAP_POPULATE MAP_POPULATE
-#else
-#define MPH_MAP_POPULATE MAP_PREFAULT_READ
-#endif
-#endif
-
 void
 mph_mmap(pTHX_ char *file, struct mph_obj *obj) {
     struct stat st;
@@ -193,7 +236,21 @@ normalize_with_flags(pTHX_ SV *sv, SV *normalized_sv, SV *is_utf8_sv, int downgr
     }
 }
 
+#define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
+
+START_MY_CXT
+
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel		
+
+BOOT:
+{
+  {
+    MY_CXT_INIT;
+    MPH_INIT_KEYSV(MPH_KEYSV_IDX,"idx");
+    MPH_INIT_KEYSV(MPH_KEYSV_H1_KEYS,"h1_keys");
+    MPH_INIT_KEYSV(MPH_KEYSV_XOR_VAL,"xor_val");
+  }
+}
 
 UV
 hash_with_state(str_sv,state_sv)
@@ -318,13 +375,18 @@ seed_state(base_seed_sv)
         RETVAL
 
 U32
-calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
+calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos,idx1,buckets,keys)
     U32 max_xor_val
     SV *h2_sv
     SV *idx_sv
     SV *used_sv
     SV *used_pos
-    PROTOTYPE: $$$$$
+    U32 idx1
+    AV *buckets
+    AV *keys
+    PREINIT:
+        dMY_CXT;
+    PROTOTYPE: $$$$$$\@\@
     CODE:
 {
     U32 xor_val= 0;
@@ -351,7 +413,6 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
             RETVAL= 0;
         } else {
             *idx_start= pos;
-            used[pos]= 1;
             pos = -pos-1;
             RETVAL= (U32)pos;
         }
@@ -379,17 +440,67 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos)
                 h2_ptr++;
                 idx_ptr++;
             }
-            {
-                /* update used */
-                U32 *i= idx_start;
-                while (i < idx_ptr) {
-                    used[*i] = 1;
-                    i++;
-                }
-            }
             RETVAL= xor_val;
             break;
         }
+    }
+    if (RETVAL) {
+        U32 *idx2= idx_start;
+        U32 *idx_end= idx_start + h2_count;
+        HV *idx1_hv;
+        U32 i= 0;
+
+        SV **buckets_rvp= av_fetch(buckets, idx1, 1);
+        if (!buckets_rvp) croak("out of memory?");
+        if (!SvROK(*buckets_rvp)) {
+            idx1_hv= newHV();
+            if (!idx1_hv) croak("out of memory");
+            sv_upgrade(*buckets_rvp,SVt_RV);
+            SvRV_set(*buckets_rvp,(SV *)idx1_hv);
+            SvROK_on(*buckets_rvp);
+        } else {
+             idx1_hv= (HV *)SvRV(*buckets_rvp);
+        }
+
+        hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_XOR_VAL,RETVAL);
+        hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_H1_KEYS,h2_count);
+
+        /* update used */
+        while (idx2 < idx_end) {
+            HV *idx2_hv;
+            HV *keys_hv;
+
+            SV **keys_rvp;
+            SV **buckets_rvp;
+
+            keys_rvp= av_fetch(keys, i, 0);
+            if (!keys_rvp) croak("no key_info in bucket %d", i);
+            keys_hv= (HV *)SvRV(*keys_rvp);
+
+            buckets_rvp= av_fetch(buckets, *idx2, 1);
+            if (!buckets_rvp) croak("out of memory?");
+
+            if (!SvROK(*buckets_rvp)) {
+                sv_upgrade(*buckets_rvp,SVt_RV);
+            } else {
+                idx2_hv= (HV *)SvRV(*buckets_rvp);
+
+                hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_XOR_VAL);
+                hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_H1_KEYS);
+                SvREFCNT_dec(idx2_hv);
+            }
+
+            SvRV_set(*buckets_rvp,(SV*)keys_hv);
+            SvROK_on(*buckets_rvp);
+            SvREFCNT_inc(keys_hv);
+
+            hv_setuv_with_keysv(keys_hv,MPH_KEYSV_IDX,*idx2);
+
+            used[*idx2] = 1;
+            idx2++;
+            i++;
+        }
+
     }
 }
     OUTPUT:

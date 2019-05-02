@@ -182,28 +182,10 @@ sub _compute_first_level_inner {
             $size_count++;
         }
         my $idx_sv;
-        my $xor_val= calc_xor_val($max_xor_val, $h2_buckets[$idx1], $idx_sv, $used_sv, $used_pos);
+        my $xor_val= calc_xor_val($max_xor_val, $h2_buckets[$idx1], $idx_sv, $used_sv, $used_pos,
+            $idx1, \@buckets, $keys);
 
-        if ($xor_val) {
-            
-            my $h1_bucket= $buckets[$idx1] ||= {};
-            $h1_bucket->{xor_val}= $xor_val;
-            $h1_bucket->{h1_keys}= 0+@$keys;
-            
-            my @idx2= unpack "L*", $idx_sv;
-            foreach my $i (0 .. $#$keys) {
-                my $key_info= $keys->[$i];
-                my $idx2= $idx2[$i];
-
-                my $h2_bucket= $buckets[$idx2];
-                if ($h2_bucket) {
-                    $key_info->{$_}= $h2_bucket->{$_} 
-                        for keys %$h2_bucket;
-                }
-                $buckets[$idx2]= $key_info;
-                $key_info->{idx}= $idx2;
-            }
-        } else {
+        unless ($xor_val) {
             printf " (%d completed, %d remaining)\nIndex '%d' not solved: %s\n",
                 $size_count,0+@idx1,$idx1,join ",", map { "'$_'" } "@$keys"
                 if $debug;
