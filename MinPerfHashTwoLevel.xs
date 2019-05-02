@@ -375,15 +375,15 @@ seed_state(base_seed_sv)
         RETVAL
 
 U32
-calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos,idx1,buckets,keys)
+calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos,idx1,buckets_av,keys_av)
     U32 max_xor_val
     SV *h2_sv
     SV *idx_sv
     SV *used_sv
     SV *used_pos
     U32 idx1
-    AV *buckets
-    AV *keys
+    AV *buckets_av
+    AV *keys_av
     PREINIT:
         dMY_CXT;
     PROTOTYPE: $$$$$$\@\@
@@ -450,7 +450,7 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos,idx1,buckets,keys)
         HV *idx1_hv;
         U32 i= 0;
 
-        SV **buckets_rvp= av_fetch(buckets, idx1, 1);
+        SV **buckets_rvp= av_fetch(buckets_av, idx1, 1);
         if (!buckets_rvp) croak("out of memory?");
         if (!SvROK(*buckets_rvp)) {
             idx1_hv= newHV();
@@ -473,11 +473,11 @@ calc_xor_val(max_xor_val,h2_sv,idx_sv,used_sv,used_pos,idx1,buckets,keys)
             SV **keys_rvp;
             SV **buckets_rvp;
 
-            keys_rvp= av_fetch(keys, i, 0);
+            keys_rvp= av_fetch(keys_av, i, 0);
             if (!keys_rvp) croak("no key_info in bucket %d", i);
             keys_hv= (HV *)SvRV(*keys_rvp);
 
-            buckets_rvp= av_fetch(buckets, *idx2, 1);
+            buckets_rvp= av_fetch(buckets_av, *idx2, 1);
             if (!buckets_rvp) croak("out of memory?");
 
             if (!SvROK(*buckets_rvp)) {
