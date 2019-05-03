@@ -129,29 +129,10 @@ sub _compute_first_level_inner {
     printf "max_xor_val=%d (n=%d)\n",$max_xor_val,$n
         if $debug;
 
-    my @key_buckets;
-    my @h2_buckets;
-    my @by_length;
     my @buckets;
     my $used_pos= $variant == 1 ? 0 : undef;
-    my $used;
 
-    hash_with_state_normalized(
-            $n,
-            $state,
-            $source_hash,
-            \@h2_buckets,
-            \@key_buckets,
-            \@by_length
-        );
-
-    my $bad_idx= calc_xor_val($n, $max_xor_val, $used, $used_pos, \@by_length, \@buckets, \@key_buckets, \@h2_buckets);
-
-
-    #my $bad_idx= compute_xs($n,$state,$source_hash,$used_pos,\@buckets);
-
-
-
+    my $bad_idx= compute_xs($n, $max_xor_val, $used_pos, $state, $source_hash, \@buckets);
     if ($bad_idx) {
         printf " Index '%d' not solved.\n", $bad_idx-1;
         return;

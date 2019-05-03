@@ -339,19 +339,32 @@ seed_state(base_seed_sv)
         RETVAL
 
 UV
-hash_with_state_normalized(bucket_count,state_sv,source_hv,h2_packed_av,keybuckets_av,by_length_av)
+compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,source_hv,buckets_av)
         U32 bucket_count
+        U32 max_xor_val
+        SV *used_pos_sv
         SV* state_sv
         HV* source_hv
-        AV* h2_packed_av
-        AV* keybuckets_av
-        AV* by_length_av
-    PROTOTYPE: $$\%\@\@\@
+        AV *buckets_av
+    PREINIT:
+        dMY_CXT;
+    PROTOTYPE: $$$$\%\@
     CODE:
 {
     U8 *state_pv;
     STRLEN state_len;
     HE *he;
+
+    SV *used_sv= sv_2mortal(newSV(0));
+    AV *by_length_av= (AV*)sv_2mortal((SV*)newAV());
+    AV *keybuckets_av= (AV*)sv_2mortal((SV*)newAV());
+    AV *h2_packed_av= (AV*)sv_2mortal((SV*)newAV());
+    SV *idx_sv= sv_2mortal(newSV(20));
+    char *used;
+    STRLEN used_len;
+    IV len_idx;
+
+    RETVAL = 0;
     state_pv= (U8 *)SvPV(state_sv,state_len);
     hv_iterinit(source_hv);
 
@@ -445,31 +458,6 @@ hash_with_state_normalized(bucket_count,state_sv,source_hv,h2_packed_av,keybucke
             av_push(target_av, newSVuv(i));
         }
     }
-    RETVAL = 1;
-}
-    OUTPUT:
-        RETVAL
-
-
-UV
-calc_xor_val(bucket_count,max_xor_val,used_sv,used_pos_sv,by_length_av,buckets_av,keybuckets_av,h2_packed_av)
-    U32 bucket_count
-    U32 max_xor_val
-    SV *used_sv
-    SV *used_pos_sv
-    AV *by_length_av
-    AV *buckets_av
-    AV *keybuckets_av
-    AV *h2_packed_av
-    PREINIT:
-        dMY_CXT;
-    PROTOTYPE: $$$\@\@\@\@
-    CODE:
-{
-    SV *idx_sv= sv_2mortal(newSV(20));
-    char *used;
-    STRLEN used_len;
-    IV len_idx;
 
     if (!SvPOK(used_sv)) {
         sv_setpvs(used_sv,"");
@@ -484,7 +472,6 @@ calc_xor_val(bucket_count,max_xor_val,used_sv,used_pos_sv,by_length_av,buckets_a
 
     SvPOK_on(idx_sv);
     SvCUR_set(idx_sv,0);
-    RETVAL = 0;
 
     for (len_idx= av_top_index(by_length_av); len_idx > 0 && !RETVAL; len_idx--) {
         IV idx1_idx;
