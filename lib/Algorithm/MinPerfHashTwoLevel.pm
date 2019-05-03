@@ -147,6 +147,11 @@ sub _compute_first_level_inner {
 
     my $bad_idx= calc_xor_val($n, $max_xor_val, $used, $used_pos, \@by_length, \@buckets, \@key_buckets, \@h2_buckets);
 
+
+    #my $bad_idx= compute_xs($n,$state,$source_hash,$used_pos,\@buckets);
+
+
+
     if ($bad_idx) {
         printf " Index '%d' not solved.\n", $bad_idx-1;
         return;

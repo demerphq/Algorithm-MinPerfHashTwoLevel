@@ -285,118 +285,6 @@ hash_with_state(str_sv,state_sv)
     OUTPUT:
         RETVAL
 
-UV
-hash_with_state_normalized(n_sv,state_sv,source_hv,h2_packed_av,keybuckets_av,by_length_av)
-        SV* n_sv
-        HV* source_hv
-        SV* state_sv
-        AV* h2_packed_av
-        AV* keybuckets_av
-        AV* by_length_av
-    PROTOTYPE: $$\%\@\@\@
-    CODE:
-{
-    U8 *state_pv;
-    STRLEN state_len;
-    HE *he;
-    UV n= SvUV(n_sv);
-    state_pv= (U8 *)SvPV(state_sv,state_len);
-    hv_iterinit(source_hv);
-
-    while (he= hv_iternext(source_hv)) {
-        U8 *key_pv;
-        STRLEN key_len;
-        U64 h0;
-        U32 h1;
-        U32 h2;
-        U32 idx1;
-        SV **got_psv;
-
-        SV *key_sv= newSVhek(HeKEY_hek(he));
-        SV *key_normalized_sv= newSV(0);
-        SV *key_is_utf8_sv= newSVuv(0);
-
-        SV *val_sv= HeVAL(he);
-        SV *val_normalized_sv= newSV(0);
-        SV *val_is_utf8_sv= newSVuv(0);
-
-        normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
-        normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
-
-        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
-        if (state_len != STADTX_STATE_BYTES) {
-            croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
-        }
-        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
-        h1= h0 >> 32;
-        h2= h0 & 0xFFFFFFFF;
-        idx1= h1 % n;
-        got_psv= av_fetch(h2_packed_av,idx1,1);
-        if (!got_psv)
-            croak("panic, out of memory?");
-        if (!SvPOK(*got_psv))
-            sv_setpvs(*got_psv,"");
-        sv_catpvn(*got_psv, (char *)&h2, 4);
-
-        {
-            AV *av;
-            SV *ref_sv= newSViv(0);
-            HV *hv= newHV();
-
-            got_psv= av_fetch(keybuckets_av,idx1,1);
-            if (!got_psv)
-                croak("oom");
-
-            if (!SvROK(*got_psv)) {
-                av= newAV();
-                SvRV_set(*got_psv,(SV *)av);
-                SvROK_on(*got_psv);
-            } else {
-                av= (AV *)SvRV(*got_psv);
-            }
-
-            SvRV_set(ref_sv,(SV*)hv);
-            SvROK_on(ref_sv);
-            av_push(av,ref_sv);
-            hv_ksplit(hv,10);
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            SvREFCNT_inc_simple_NN(key_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, SvREFCNT_inc_simple_NN(key_normalized_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    SvREFCNT_inc_simple_NN(key_is_utf8_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, SvREFCNT_inc_simple_NN(val_normalized_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    SvREFCNT_inc_simple_NN(val_is_utf8_sv));
-        }
-    }
-    {
-        U32 i;
-
-        for( i = 0 ; i < n ; i++ ) {
-            SV **got= av_fetch(keybuckets_av,i,0);
-            AV *keys_av;
-            SV *keys_ref;
-            AV *target_av;
-            IV len;
-            if (!got) continue;
-            keys_av= (AV *)SvRV(*got);
-            len= av_top_index(keys_av) + 1;
-            if (len<1) continue;
-
-            got= av_fetch(by_length_av,len,1);
-            if (SvROK(*got)) {
-                target_av= (AV*)SvRV(*got);
-            } else {
-                target_av= newAV();
-                SvRV_set(*got, (SV*)target_av);
-                SvROK_on(*got);
-            }
-            av_push(target_av, newSVuv(i));
-        }
-    }
-    RETVAL = 1;
-}
-    OUTPUT:
-        RETVAL
 
 SV *
 seed_state(base_seed_sv)
@@ -449,6 +337,119 @@ seed_state(base_seed_sv)
 }
     OUTPUT:
         RETVAL
+
+UV
+hash_with_state_normalized(bucket_count,state_sv,source_hv,h2_packed_av,keybuckets_av,by_length_av)
+        U32 bucket_count
+        SV* state_sv
+        HV* source_hv
+        AV* h2_packed_av
+        AV* keybuckets_av
+        AV* by_length_av
+    PROTOTYPE: $$\%\@\@\@
+    CODE:
+{
+    U8 *state_pv;
+    STRLEN state_len;
+    HE *he;
+    state_pv= (U8 *)SvPV(state_sv,state_len);
+    hv_iterinit(source_hv);
+
+    while (he= hv_iternext(source_hv)) {
+        U8 *key_pv;
+        STRLEN key_len;
+        U64 h0;
+        U32 h1;
+        U32 h2;
+        U32 idx1;
+        SV **got_psv;
+
+        SV *key_sv= newSVhek(HeKEY_hek(he));
+        SV *key_normalized_sv= newSV(0);
+        SV *key_is_utf8_sv= newSVuv(0);
+
+        SV *val_sv= HeVAL(he);
+        SV *val_normalized_sv= newSV(0);
+        SV *val_is_utf8_sv= newSVuv(0);
+
+        normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
+        normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+
+        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
+        if (state_len != STADTX_STATE_BYTES) {
+            croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
+        }
+        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
+        h1= h0 >> 32;
+        h2= h0 & 0xFFFFFFFF;
+        idx1= h1 % bucket_count;
+        got_psv= av_fetch(h2_packed_av,idx1,1);
+        if (!got_psv)
+            croak("panic, out of memory?");
+        if (!SvPOK(*got_psv))
+            sv_setpvs(*got_psv,"");
+        sv_catpvn(*got_psv, (char *)&h2, 4);
+
+        {
+            AV *av;
+            SV *ref_sv= newSViv(0);
+            HV *hv= newHV();
+
+            got_psv= av_fetch(keybuckets_av,idx1,1);
+            if (!got_psv)
+                croak("oom");
+
+            if (!SvROK(*got_psv)) {
+                av= newAV();
+                SvRV_set(*got_psv,(SV *)av);
+                SvROK_on(*got_psv);
+            } else {
+                av= (AV *)SvRV(*got_psv);
+            }
+
+            SvRV_set(ref_sv,(SV*)hv);
+            SvROK_on(ref_sv);
+            av_push(av,ref_sv);
+            hv_ksplit(hv,10);
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            SvREFCNT_inc_simple_NN(key_sv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, SvREFCNT_inc_simple_NN(key_normalized_sv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    SvREFCNT_inc_simple_NN(key_is_utf8_sv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, SvREFCNT_inc_simple_NN(val_normalized_sv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    SvREFCNT_inc_simple_NN(val_is_utf8_sv));
+        }
+    }
+    {
+        U32 i;
+
+        for( i = 0 ; i < bucket_count ; i++ ) {
+            SV **got= av_fetch(keybuckets_av,i,0);
+            AV *keys_av;
+            SV *keys_ref;
+            AV *target_av;
+            IV len;
+            if (!got) continue;
+            keys_av= (AV *)SvRV(*got);
+            len= av_top_index(keys_av) + 1;
+            if (len<1) continue;
+
+            got= av_fetch(by_length_av,len,1);
+            if (SvROK(*got)) {
+                target_av= (AV*)SvRV(*got);
+            } else {
+                target_av= newAV();
+                SvRV_set(*got, (SV*)target_av);
+                SvROK_on(*got);
+            }
+            av_push(target_av, newSVuv(i));
+        }
+    }
+    RETVAL = 1;
+}
+    OUTPUT:
+        RETVAL
+
 
 UV
 calc_xor_val(bucket_count,max_xor_val,used_sv,used_pos_sv,by_length_av,buckets_av,keybuckets_av,h2_buckets_av)
