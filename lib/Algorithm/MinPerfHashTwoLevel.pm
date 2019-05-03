@@ -131,35 +131,34 @@ sub _compute_first_level_inner {
 
     my @key_buckets;
     my @h2_buckets;
-    keys(%$source_hash);
-    while (my ($key,$val)= each %$source_hash) {
-        my ($key_normalized, $key_is_utf8, $val_normalized, $val_is_utf8, $idx1, $h2_packed);
-        my $h0= hash_with_state_normalized(
-            $key, $key_normalized, $key_is_utf8,
-            $val, $val_normalized, $val_is_utf8,
-            $idx1, \@h2_buckets,
-            $state,
-            $n, \@key_buckets
-        );
-    }
-
+    my @by_length;
     my @buckets;
-    my $used_sv= "\0" x $n;
-
-    my @idx1= sort {
-            length($h2_buckets[$b]) <=> length($h2_buckets[$a]) ||
-            $a <=> $b
-        } grep {
-            defined $h2_buckets[$_]
-        } (0 .. ($n-1));
     my $used_pos= $variant == 1 ? 0 : undef;
+    my $used;
 
-    my $bad_idx= calc_xor_val($n, $max_xor_val, $used_pos, \@idx1, \@buckets, \@key_buckets, \@h2_buckets);
+    hash_with_state_normalized(
+            $n,
+            $state,
+            $source_hash,
+            \@h2_buckets,
+            \@key_buckets,
+            \@by_length
+        );
 
-    if ($bad_idx) {
-        printf " Index '%d' not solved.\n", $bad_idx-1;
-        return;
+    while (@by_length) {
+        my $idx_ary= pop @by_length
+            or next;
+
+        my $bad_idx= calc_xor_val($n, $max_xor_val, $used, $used_pos, $idx_ary, \@buckets, \@key_buckets, \@h2_buckets);
+
+        if ($bad_idx) {
+            printf " Index '%d' not solved.\n", $bad_idx-1;
+            return;
+        }
     }
+
+
+
 
     $self->{buckets}= \@buckets;
     return \@buckets;
