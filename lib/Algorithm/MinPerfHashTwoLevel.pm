@@ -145,16 +145,11 @@ sub _compute_first_level_inner {
             \@by_length
         );
 
-    while (@by_length) {
-        my $idx_ary= pop @by_length
-            or next;
+    my $bad_idx= calc_xor_val($n, $max_xor_val, $used, $used_pos, \@by_length, \@buckets, \@key_buckets, \@h2_buckets);
 
-        my $bad_idx= calc_xor_val($n, $max_xor_val, $used, $used_pos, $idx_ary, \@buckets, \@key_buckets, \@h2_buckets);
-
-        if ($bad_idx) {
-            printf " Index '%d' not solved.\n", $bad_idx-1;
-            return;
-        }
+    if ($bad_idx) {
+        printf " Index '%d' not solved.\n", $bad_idx-1;
+        return;
     }
 
 
