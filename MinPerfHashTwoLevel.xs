@@ -452,7 +452,7 @@ hash_with_state_normalized(bucket_count,state_sv,source_hv,h2_packed_av,keybucke
 
 
 UV
-calc_xor_val(bucket_count,max_xor_val,used_sv,used_pos_sv,by_length_av,buckets_av,keybuckets_av,h2_buckets_av)
+calc_xor_val(bucket_count,max_xor_val,used_sv,used_pos_sv,by_length_av,buckets_av,keybuckets_av,h2_packed_av)
     U32 bucket_count
     U32 max_xor_val
     SV *used_sv
@@ -460,7 +460,7 @@ calc_xor_val(bucket_count,max_xor_val,used_sv,used_pos_sv,by_length_av,buckets_a
     AV *by_length_av
     AV *buckets_av
     AV *keybuckets_av
-    AV *h2_buckets_av
+    AV *h2_packed_av
     PREINIT:
         dMY_CXT;
     PROTOTYPE: $$$\@\@\@\@
@@ -508,7 +508,7 @@ calc_xor_val(bucket_count,max_xor_val,used_sv,used_pos_sv,by_length_av,buckets_a
                 croak("panic: no idx1_av element for idx %ld",idx1_idx);
             idx1= SvUV(*got);
 
-            got= av_fetch(h2_buckets_av, idx1, 0);
+            got= av_fetch(h2_packed_av, idx1, 0);
             if (!got)
                 croak("panic: no h2_buckets for idx %u",idx1);
             h2_sv= *got;
