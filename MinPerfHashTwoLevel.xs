@@ -106,7 +106,27 @@ struct mph_obj {
     int fd;
 };
 
+#ifndef CHAR_BITS
+#define CHAR_BITS 8
+#endif
 
+#define _BITSDECL(idx,bits) \
+    const U64 bitpos= idx * bits;                           \
+    const U64 bytepos= bitpos / CHAR_BITS;                  \
+    const U8 shift= bitpos % CHAR_BITS;                     \
+    const U8 bitmask= ( 1 << bits ) - 1
+
+#define GETBITS(into,flags,idx,bits) STMT_START {           \
+    _BITSDECL(idx,bits);                                    \
+    into= ((flags)[bytepos] >> shift) & bitmask;            \
+} STMT_END
+
+#define SETBITS(value,flags,idx,bits) STMT_START {          \
+    _BITSDECL(idx,bits);                                    \
+    const U8 v= value;                                      \
+    (flags)[bytepos] &= ~(bitmask << shift);                \
+    (flags)[bytepos] |= ((v & bitmask) << shift);           \
+} STMT_END
 
 #define sv_set_from_bucket(sv,strs,ofs,len,idx,flags,bits) \
 STMT_START {                                            \
@@ -114,7 +134,7 @@ STMT_START {                                            \
     U8 is_utf8;                                         \
     if (ofs) {                                          \
         ptr= (strs) + (ofs);                            \
-        is_utf8= (*((flags)+(((idx)*(bits))>>3))>>(((idx)*(bits))&7))&((1<<bits)-1); \
+        GETBITS(is_utf8,flags,idx,bits);                \
     } else {                                            \
         ptr= 0;                                         \
         is_utf8= 0;                                     \
@@ -222,27 +242,79 @@ mph_munmap(struct mph_obj *obj) {
     close(obj->fd);
 }
 
-void
+STRLEN
 normalize_with_flags(pTHX_ SV *sv, SV *normalized_sv, SV *is_utf8_sv, int downgrade) {
+    STRLEN len;
     if (SvROK(sv)) {
         croak("not expecting a reference in downgrade_with_flags()");
     }
     sv_setsv(normalized_sv,sv);
-    if (SvPOK(sv) && SvUTF8(sv)) {
-        if (downgrade)
-            sv_utf8_downgrade(normalized_sv,1);
-        if (SvUTF8(normalized_sv)) {
-            SvUTF8_off(normalized_sv);
-            sv_setiv(is_utf8_sv,1);
-        } else {
-            sv_setiv(is_utf8_sv,2);
+    if (SvOK(sv)) {
+        STRLEN pv_len;
+        char *pv= SvPV(sv,pv_len);
+        if (SvUTF8(sv)) {
+            if (downgrade)
+                sv_utf8_downgrade(normalized_sv,1);
+            if (SvUTF8(normalized_sv)) {
+                SvUTF8_off(normalized_sv);
+                sv_setiv(is_utf8_sv,1);
+            } else {
+                sv_setiv(is_utf8_sv,2);
+            }
         }
+        return pv_len;
     } else {
         sv_setiv(is_utf8_sv, 0);
+        return 0;
+    }
+}
+
+U32
+_roundup(const U32 n, const U32 s) {
+    const U32 r= n % s;
+    if (r) {
+        return n + s - r;
+    } else {
+        return n;
     }
 }
 
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
+
+#define SETOFS(i,he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_ofs_hv)    \
+STMT_START {                                                                \
+        if (he) {                                                           \
+            SV *sv= HeVAL(he);                                              \
+            if (SvOK(sv)) {                                                 \
+                HE *ofs= hv_fetch_ent(str_ofs_hv,sv,1,0);                   \
+                SV *ofs_sv= ofs ? HeVAL(ofs) : NULL;                        \
+                STRLEN pv_len;                                              \
+                char *pv;                                                   \
+                if (!ofs_sv)                                                \
+                    croak("oom getting ofs for " #he "for %u",i);           \
+                if (SvUOK(ofs_sv)){                                         \
+                    table[i].key_ofs= SvUV(ofs_sv);                         \
+                    table[i].key_len= sv_len(sv);                           \
+                } else {                                                    \
+                    pv= SvPV(sv,pv_len);                                    \
+                    table[i].key_len= pv_len;                               \
+                    if (pv_len) {                                           \
+                        table[i].key_ofs= str_buf_pos - str_buf_start;      \
+                        Copy(pv,str_buf_pos,pv_len,char);                   \
+                        str_buf_pos += pv_len;                              \
+                    } else {                                                \
+                        table[i].key_ofs= 1;                                \
+                    }                                                       \
+                    sv_setuv(ofs_sv,table[i].key_ofs);                      \
+                }                                                           \
+            } else {                                                        \
+                table[i].key_ofs= 0;                                        \
+                table[i].key_len= 0;                                        \
+            }                                                               \
+        } else {                                                            \
+            croak("no " #he " for %u",i);                                   \
+        }                                                                   \
+} STMT_END
 
 START_MY_CXT
 
@@ -338,17 +410,19 @@ seed_state(base_seed_sv)
     OUTPUT:
         RETVAL
 
+
 UV
-compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,source_hv,buckets_av)
+compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv,buckets_av)
         U32 bucket_count
         U32 max_xor_val
         SV *used_pos_sv
         SV* state_sv
+        SV* buf_length_sv
         HV* source_hv
         AV *buckets_av
     PREINIT:
         dMY_CXT;
-    PROTOTYPE: $$$$\%\@
+    PROTOTYPE: $$$$$\%\@
     CODE:
 {
     U8 *state_pv;
@@ -363,6 +437,8 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,source_hv,buckets_av)
     char *used;
     STRLEN used_len;
     IV len_idx;
+    U32 buf_length= 0;
+    U32 i;
 
     RETVAL = 0;
     state_pv= (U8 *)SvPV(state_sv,state_len);
@@ -385,8 +461,8 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,source_hv,buckets_av)
         SV *val_normalized_sv= newSV(0);
         SV *val_is_utf8_sv= newSVuv(0);
 
-        normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
-        normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+        buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
+        buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
 
         key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
         if (state_len != STADTX_STATE_BYTES) {
@@ -433,30 +509,36 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,source_hv,buckets_av)
             hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    SvREFCNT_inc_simple_NN(val_is_utf8_sv));
         }
     }
-    {
-        U32 i;
+    if (buf_length_sv)
+        sv_setuv(buf_length_sv,buf_length);
 
-        for( i = 0 ; i < bucket_count ; i++ ) {
-            SV **got= av_fetch(keybuckets_av,i,0);
-            AV *keys_av;
-            SV *keys_ref;
-            AV *target_av;
-            IV len;
-            if (!got) continue;
-            keys_av= (AV *)SvRV(*got);
-            len= av_top_index(keys_av) + 1;
-            if (len<1) continue;
+    /* Sort the buckets by size by constructing an AoA, with the outer array indexed by length,
+     * and the inner array being the list of items of that length. (Thus the contents of index
+     * 0 is empty/undef).
+     * The end result is we can process the collisions from the most keys to a bucket to the
+     * least in O(N) and not O(N log2 N).
+     */
 
-            got= av_fetch(by_length_av,len,1);
-            if (SvROK(*got)) {
-                target_av= (AV*)SvRV(*got);
-            } else {
-                target_av= newAV();
-                SvRV_set(*got, (SV*)target_av);
-                SvROK_on(*got);
-            }
-            av_push(target_av, newSVuv(i));
+    for( i = 0 ; i < bucket_count ; i++ ) {
+        SV **got= av_fetch(keybuckets_av,i,0);
+        AV *keys_av;
+        SV *keys_ref;
+        AV *target_av;
+        IV len;
+        if (!got) continue;
+        keys_av= (AV *)SvRV(*got);
+        len= av_top_index(keys_av) + 1;
+        if (len<1) continue;
+
+        got= av_fetch(by_length_av,len,1);
+        if (SvROK(*got)) {
+            target_av= (AV*)SvRV(*got);
+        } else {
+            target_av= newAV();
+            SvRV_set(*got, (SV*)target_av);
+            SvROK_on(*got);
         }
+        av_push(target_av, newSVuv(i));
     }
 
     if (!SvPOK(used_sv)) {
@@ -621,7 +703,125 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,source_hv,buckets_av)
     OUTPUT:
         RETVAL
 
+
+
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::OnDisk
+
+SV *
+packed(version_sv,buf_length_sv,state_sv,comment_sv,buckets_av)
+        SV* version_sv
+        SV* buf_length_sv
+        SV* state_sv
+        SV* comment_sv
+        AV *buckets_av
+    PREINIT:
+        dMY_CXT;
+    PROTOTYPE: $$$$\@
+    CODE:
+{
+    U32 buf_length= SvUV(buf_length_sv);
+    U32 bucket_count= av_top_index(buckets_av) + 1;
+    U32 header_rlen= _roundup(sizeof(struct mph_header),16);
+    STRLEN state_len;
+    char *state_pv= SvPV(state_sv, state_len);
+    U32 state_rlen= _roundup(state_len,16);
+    U32 table_rlen= _roundup(sizeof(struct mph_bucket) * bucket_count,16);
+    U32 key_flags_rlen= _roundup((bucket_count * 2 + 7 ) / 8,16);
+    U32 val_flags_rlen= _roundup((bucket_count + 7) / 8,16);
+    U32 str_rlen= _roundup(buf_length + 2 + (SvOK(comment_sv) ? sv_len(comment_sv)+1 : 1),16);
+    HV *str_ofs_hv= (HV *)sv_2mortal((SV*)newHV());
+
+    U32 total_size=
+        + header_rlen
+        + state_rlen
+        + table_rlen
+        + key_flags_rlen
+        + val_flags_rlen
+        + str_rlen
+    ;
+
+    SV *sv_buf= newSV(total_size);
+    SvPOK_on(sv_buf);
+    SvCUR_set(sv_buf,sizeof(struct mph_header));
+    char *start= SvPVX(sv_buf);
+    Zero(start,total_size,char);
+    struct mph_header *head= (struct mph_header *)start;
+
+    head->magic_num= 1278363728;
+    head->variant= SvUV(version_sv);
+    head->num_buckets= bucket_count;
+    head->state_ofs= header_rlen;
+    head->table_ofs= head->state_ofs + state_rlen;
+    head->key_flags_ofs= head->table_ofs + table_rlen;
+    head->val_flags_ofs= head->key_flags_ofs + key_flags_rlen;
+    head->str_buf_ofs= head->val_flags_ofs + val_flags_rlen;
+
+    char *state= start + head->state_ofs;
+    struct mph_bucket *table= (struct mph_bucket *)(start + head->table_ofs);
+    char *key_flags= start + head->key_flags_ofs;
+    char *val_flags= start + head->val_flags_ofs;
+    char *str_buf_start= start + head->str_buf_ofs;
+    char *str_buf_pos= str_buf_start + 2;
+    U32 i;
+    STRLEN pv_len;
+    char *pv;
+
+    Copy(state_pv,state,state_len,char);
+    pv= SvPV(comment_sv,pv_len);
+    Copy(pv,str_buf_pos,pv_len+1,char);
+    str_buf_pos += pv_len + 1;
+
+    /*
+    U64 table_checksum;
+    U64 str_buf_checksum;
+    */
+    for (i= 0; i < bucket_count; i++) {
+        SV **got= av_fetch(buckets_av,i,0);
+        HV *hv= (HV *)SvRV(*got);
+        HE *key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
+        HE *key_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,0);
+        HE *val_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED,0);
+        HE *val_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,0);
+        HE *xor_val_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_XOR_VAL,0);
+
+        if (xor_val_he) {
+            table[i].xor_val= SvUV(HeVAL(xor_val_he));
+        } else {
+            table[i].xor_val= 0;
+        }
+        SETOFS(i,key_normalized_he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_ofs_hv);
+        SETOFS(i,val_normalized_he,table,val_ofs,val_len,str_buf_start,str_buf_pos,str_ofs_hv);
+        if (key_is_utf8_he) {
+            UV u= SvUV(HeVAL(key_is_utf8_he));
+            SETBITS(u,key_flags,i,2);
+        } else {
+            croak("no key_is_utf8_he for %u",i);
+        }
+        if (val_is_utf8_he) {
+            UV u= SvUV(HeVAL(val_is_utf8_he));
+            SETBITS(u,val_flags,i,1);
+        } else {
+            croak("no val_is_utf8_he for %u",i);
+        }
+    }
+    head->table_checksum= stadtx_hash_with_state(state_pv,start + head->table_ofs,head->str_buf_ofs - head->table_ofs);
+    head->str_buf_checksum= stadtx_hash_with_state(state_pv,str_buf_start,str_buf_pos - str_buf_start);
+    if (SvLEN(sv_buf)<str_buf_pos - start)
+        croak("bad mojo %lu:%lu (total:%u,header:%u,state:%u,table:%u,key_flags:%u,val_flags:%u,str:%u)",
+            SvLEN(sv_buf),str_buf_pos - start,
+            total_size,
+            header_rlen,
+            state_rlen,
+            table_rlen,
+            key_flags_rlen,
+            val_flags_rlen,
+            str_rlen);
+    SvCUR_set(sv_buf,str_buf_pos - start);
+    SvPOK_on(sv_buf);
+    RETVAL= sv_buf;
+}
+    OUTPUT:
+        RETVAL
 
 SV*
 mount_file(file_sv)
