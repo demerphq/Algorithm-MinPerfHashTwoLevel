@@ -95,22 +95,6 @@ sub _compute_first_level {
         join " ", sort keys(%$source_hash));
 }
 
-sub __compute_max_xor_val {
-    my ($n,$variant)= @_;
-    # if $n is a power of two then flipping higher bits
-    # wont change the distribution of the keys, so we set
-    # max_xor_val to $n, on the other hand if it is not,
-    # then we can set it to UINT32_MAX.
-    my $n_bits= sprintf "%b", $n;
-    my $n_bits_sum= 0;
-    $n_bits_sum += $_ for split m//, $n_bits;
-    if ($n_bits_sum == 1) {
-        return $n;
-    } else {
-        return $variant ? INT32_MAX : UINT32_MAX;
-    }
-}
-
 sub _compute_first_level_inner {
     my ($self)= @_;
     my $debug= $self->{debug};
@@ -124,10 +108,6 @@ sub _compute_first_level_inner {
         if $debug;
 
     my $source_hash= $self->{source_hash};
-    my $n= $self->{n};
-    my $max_xor_val= __compute_max_xor_val($n,$variant);
-    printf "max_xor_val=%d (n=%d)\n",$max_xor_val,$n
-        if $debug;
 
     my @buckets;
     my $buf_length;
