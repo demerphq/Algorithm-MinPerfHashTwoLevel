@@ -459,9 +459,8 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(self_hv,buf_length_sv,source_hv,buckets_av)
+compute_xs(self_hv,source_hv,buckets_av)
         HV *self_hv
-        SV* buf_length_sv
         HV* source_hv
         AV *buckets_av
     PREINIT:
@@ -491,6 +490,7 @@ compute_xs(self_hv,buf_length_sv,source_hv,buckets_av)
     U32 variant;
     U32 compute_flags;
     SV* state_sv;
+    SV* buf_length_sv;
 
     RETVAL = 0;
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_VARIANT,0);
@@ -517,6 +517,14 @@ compute_xs(self_hv,buf_length_sv,source_hv,buckets_av)
     } else {
         croak("no state?");
     }
+    
+    he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_BUF_LENGTH,1);
+    if (he) {
+        buf_length_sv= HeVAL(he);
+    } else {
+        croak("no buf_length?");
+    }
+
 
     hv_iterinit(source_hv);
     while (he= hv_iternext(source_hv)) {

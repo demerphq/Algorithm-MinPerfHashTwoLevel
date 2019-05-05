@@ -103,7 +103,6 @@ sub _compute_first_level_inner {
     my $debug= $self->{debug};
     my $state= $self->{state};
 
-    my $variant= $self->{variant};
 
     printf "checking seed %s => state: %s\n", 
         unpack("H*",$self->{seed}), 
@@ -111,19 +110,14 @@ sub _compute_first_level_inner {
         if $debug;
 
     my $source_hash= $self->{source_hash};
-
     my @buckets;
-    my $buf_length;
-    my $filter_undef_values;
-    my $compute_flags= $self->{compute_flags} || 0;
 
-    my $bad_idx= compute_xs($self, $buf_length, $source_hash, \@buckets);
+    my $bad_idx= compute_xs($self, $source_hash, \@buckets);
     if ($bad_idx) {
         printf " Index '%d' not solved.\n", $bad_idx-1;
         return;
     }
 
-    $self->{buf_length}= $buf_length;
     $self->{buckets}= \@buckets;
     return \@buckets;
 }
