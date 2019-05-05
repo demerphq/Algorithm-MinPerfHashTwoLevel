@@ -37,7 +37,18 @@
 #define MPH_KEYSV_VAL               7
 #define MPH_KEYSV_VAL_NORMALIZED    8
 #define MPH_KEYSV_VAL_IS_UTF8       9
-#define COUNT_MPH_KEYSV 10
+
+#define MPH_KEYSV_VARIANT           10
+#define MPH_KEYSV_COMPUTE_FLAGS     11
+#define MPH_KEYSV_STATE             12
+#define MPH_KEYSV_SOURCE_HASH       13
+#define MPH_KEYSV_BUF_LENGTH        14
+#define MPH_KEYSV_BUCKETS           15
+
+#define COUNT_MPH_KEYSV 16
+
+#define MPH_F_FILTER_UNDEF          1
+#define MPH_F_DETERMINISTIC         2
 
 #define MPH_F_FILTER_UNDEF 1
 #define MPH_F_DETERMINISTIC 2
@@ -363,6 +374,13 @@ BOOT:
     MPH_INIT_KEYSV(MPH_KEYSV_VAL,"val");
     MPH_INIT_KEYSV(MPH_KEYSV_VAL_NORMALIZED,"val_normalized");
     MPH_INIT_KEYSV(MPH_KEYSV_VAL_IS_UTF8,"val_is_utf8");
+
+    MPH_INIT_KEYSV(MPH_KEYSV_VARIANT,"variant");
+    MPH_INIT_KEYSV(MPH_KEYSV_COMPUTE_FLAGS,"compute_flags");
+    MPH_INIT_KEYSV(MPH_KEYSV_STATE,"state");
+    MPH_INIT_KEYSV(MPH_KEYSV_SOURCE_HASH,"source_hash");
+    MPH_INIT_KEYSV(MPH_KEYSV_BUF_LENGTH,"buf_length");
+    MPH_INIT_KEYSV(MPH_KEYSV_BUCKETS,"buckets");
   }
 }
 
