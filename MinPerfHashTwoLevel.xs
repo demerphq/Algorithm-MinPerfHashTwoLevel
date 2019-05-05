@@ -39,6 +39,9 @@
 #define MPH_KEYSV_VAL_IS_UTF8       9
 #define COUNT_MPH_KEYSV 10
 
+#define MPH_F_FILTER_UNDEF 1
+#define MPH_F_DETERMINISTIC 2
+
 typedef struct {
     SV *sv;
     U32 hash;
@@ -422,13 +425,13 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(variant,bucket_count,max_xor_val,state_sv,buf_length_sv,filter_undef_values_sv,source_hv,buckets_av)
+compute_xs(variant,compute_flags,bucket_count,max_xor_val,state_sv,buf_length_sv,source_hv,buckets_av)
         U32 variant
+        U32 compute_flags
         U32 bucket_count
         U32 max_xor_val
         SV* state_sv
         SV* buf_length_sv
-        SV* filter_undef_values_sv
         HV* source_hv
         AV *buckets_av
     PREINIT:
@@ -450,7 +453,6 @@ compute_xs(variant,bucket_count,max_xor_val,state_sv,buf_length_sv,filter_undef_
     IV len_idx;
     U32 buf_length= 0;
     U32 i;
-    UV filter_undef_values= SvOK(filter_undef_values_sv) ? SvUV(filter_undef_values_sv) : 0;
     AV *keys_av= (AV *)sv_2mortal((SV*)newAV());
     IV singleton_pos= 0;
 
@@ -476,7 +478,7 @@ compute_xs(variant,bucket_count,max_xor_val,state_sv,buf_length_sv,filter_undef_
         U64 h0;
 
         if (!val_sv) croak("no sv?");
-        if (!SvOK(val_sv) && filter_undef_values) continue;
+        if (!SvOK(val_sv) && (compute_flags & MPH_F_FILTER_UNDEF)) continue;
         if (SvROK(val_sv)) croak("do not know how to handle reference values");
 
         hv= newHV();
@@ -505,7 +507,7 @@ compute_xs(variant,bucket_count,max_xor_val,state_sv,buf_length_sv,filter_undef_
         av_push(keys_av,newRV_noinc((SV*)hv));
     }
 
-    if (1)
+    if (compute_flags & MPH_F_DETERMINISTIC)
         sortsv(AvARRAY(keys_av),bucket_count,_compare);
 
     for (i=0; i<bucket_count;i++) {
