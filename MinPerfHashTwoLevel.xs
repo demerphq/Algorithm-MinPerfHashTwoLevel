@@ -282,6 +282,22 @@ _roundup(const U32 n, const U32 s) {
     }
 }
 
+U32 compute_max_xor_val(const U32 n, const U32 variant) {
+    U32 n_copy= n;
+    int n_bits= 0;
+
+    while (n_copy) {
+        if (n_copy & 1) n_bits++;
+        n_copy = n_copy >> 1;
+    }
+
+    if (n_bits > 1) {
+        return variant ? INT32_MAX : UINT32_MAX;
+    } else {
+        return n;
+    }
+}
+
 START_MY_CXT
 
 I32
@@ -425,7 +441,7 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(variant,compute_flags,bucket_count,max_xor_val,state_sv,buf_length_sv,source_hv,buckets_av)
+compute_xs(variant,compute_flags,state_sv,buf_length_sv,source_hv,buckets_av)
         U32 variant
         U32 compute_flags
         SV* state_sv
@@ -434,7 +450,7 @@ compute_xs(variant,compute_flags,bucket_count,max_xor_val,state_sv,buf_length_sv
         AV *buckets_av
     PREINIT:
         dMY_CXT;
-    PROTOTYPE: $$$$$$$\%\@
+    PROTOTYPE: $$$$\%\@
     CODE:
 {
     U8 *state_pv;
