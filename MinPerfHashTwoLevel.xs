@@ -470,6 +470,9 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_un
         SV *key_normalized_sv;
         SV *key_is_utf8_sv;
         HV *hv;
+        U8 *key_pv;
+        STRLEN key_len;
+        U64 h0;
 
         if (!val_sv) croak("no sv?");
         if (!SvOK(val_sv) && filter_undef_values) continue;
@@ -485,6 +488,10 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_un
 
         buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
         buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+        
+        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
+        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
+        
         hv_ksplit(hv,15);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
@@ -492,33 +499,31 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_un
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
 
         av_push(keys_av,newRV_noinc((SV*)hv));
     }
 
-    if (0)
+    if (1)
         sortsv(AvARRAY(keys_av),bucket_count,_compare);
 
     for (i=0; i<bucket_count;i++) {
-        U8 *key_pv;
-        STRLEN key_len;
         U64 h0;
         U32 h1;
         U32 h2;
         U32 idx1;
         SV **got_psv;
-        SV* key_normalized_sv;
-        HE* key_normalized_he;
+        SV* h0_sv;
+        HE* h0_he;
         HV *hv;
         got_psv= av_fetch(keys_av,i,0);
         if (!got_psv || !SvROK(*got_psv)) croak("bad item in keys_av");
         hv= (HV *)SvRV(*got_psv);
-        key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
-        if (!key_normalized_he) croak("no key_normalized?");
-        key_normalized_sv= HeVAL(key_normalized_he);
+        h0_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_H0,0);
+        if (!h0_he) croak("no h0?");
+        h0_sv= HeVAL(h0_he);
+        h0= SvUV(h0_sv);
 
-        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
-        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
         h1= h0 >> 32;
         h2= h0 & 0xFFFFFFFF;
         idx1= h1 % bucket_count;
@@ -545,7 +550,6 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_un
             }
 
             av_push(av,newRV_inc((SV*)hv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_H0, newSVuv(h0));
         }
     }
     if (buf_length_sv)
