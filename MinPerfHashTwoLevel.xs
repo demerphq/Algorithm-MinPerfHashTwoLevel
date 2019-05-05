@@ -422,10 +422,10 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_undef_values_sv,source_hv,buckets_av)
+compute_xs(variant,bucket_count,max_xor_val,state_sv,buf_length_sv,filter_undef_values_sv,source_hv,buckets_av)
+        U32 variant
         U32 bucket_count
         U32 max_xor_val
-        SV *used_pos_sv
         SV* state_sv
         SV* buf_length_sv
         SV* filter_undef_values_sv
@@ -433,7 +433,7 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_un
         AV *buckets_av
     PREINIT:
         dMY_CXT;
-    PROTOTYPE: $$$$$\%\@
+    PROTOTYPE: $$$$$$$\%\@
     CODE:
 {
     U8 *state_pv;
@@ -452,6 +452,7 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_un
     U32 i;
     UV filter_undef_values= SvOK(filter_undef_values_sv) ? SvUV(filter_undef_values_sv) : 0;
     AV *keys_av= (AV *)sv_2mortal((SV*)newAV());
+    IV singleton_pos= 0;
 
     RETVAL = 0;
     state_pv= (U8 *)SvPV(state_sv,state_len);
@@ -642,18 +643,15 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_un
                 SvCUR_set(idx_sv,h2_strlen);
                 idx_start= (U32 *)SvPVX(idx_sv);
 
-                if (h2_count == 1 && SvOK(used_pos_sv)) {
-                    I32 pos= SvIV(used_pos_sv);
-                    while (pos < bucket_count && used[pos]) {
-                        pos++;
+                if (h2_count == 1 && variant) {
+                    while (singleton_pos < bucket_count && used[singleton_pos]) {
+                        singleton_pos++;
                     }
-                    SvIV_set(used_pos_sv,pos);
-                    if (pos == bucket_count) {
+                    if (singleton_pos == bucket_count) {
                         xor_val= 0;
                     } else {
-                        *idx_start= pos;
-                        pos = -pos-1;
-                        xor_val= (U32)pos;
+                        *idx_start= singleton_pos;
+                        xor_val= (U32)(-singleton_pos-1);
                     }
                 } else {
                     next_xor_val:

@@ -130,11 +130,10 @@ sub _compute_first_level_inner {
         if $debug;
 
     my @buckets;
-    my $used_pos= $variant == 1 ? 0 : undef;
     my $buf_length;
     my $filter_undef_values;
 
-    my $bad_idx= compute_xs($n, $max_xor_val, $used_pos, $state, $buf_length, $filter_undef_values, $source_hash, \@buckets);
+    my $bad_idx= compute_xs($variant, $n, $max_xor_val, $state, $buf_length, $filter_undef_values, $source_hash, \@buckets);
     if ($bad_idx) {
         printf " Index '%d' not solved.\n", $bad_idx-1;
         return;
