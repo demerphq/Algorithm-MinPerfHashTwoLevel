@@ -279,6 +279,17 @@ _roundup(const U32 n, const U32 s) {
     }
 }
 
+START_MY_CXT
+
+I32
+_compare(pTHX_ SV *a, SV *b) {
+    dMY_CXT;
+    HE *a_he= hv_fetch_ent_with_keysv((HV*)SvRV(a),MPH_KEYSV_KEY_NORMALIZED,0);
+    HE *b_he= hv_fetch_ent_with_keysv((HV*)SvRV(b),MPH_KEYSV_KEY_NORMALIZED,0);
+
+    return sv_cmp(HeVAL(a_he),HeVAL(b_he));
+}
+
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
 
 #define SETOFS(i,he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_ofs_hv)    \
@@ -316,7 +327,6 @@ STMT_START {                                                                \
         }                                                                   \
 } STMT_END
 
-START_MY_CXT
 
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel		
 
@@ -412,12 +422,13 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv,buckets_av)
+compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,filter_undef_values_sv,source_hv,buckets_av)
         U32 bucket_count
         U32 max_xor_val
         SV *used_pos_sv
         SV* state_sv
         SV* buf_length_sv
+        SV* filter_undef_values_sv
         HV* source_hv
         AV *buckets_av
     PREINIT:
@@ -439,12 +450,56 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv
     IV len_idx;
     U32 buf_length= 0;
     U32 i;
+    UV filter_undef_values= SvOK(filter_undef_values_sv) ? SvUV(filter_undef_values_sv) : 0;
+    AV *keys_av= (AV *)sv_2mortal((SV*)newAV());
 
     RETVAL = 0;
     state_pv= (U8 *)SvPV(state_sv,state_len);
-    hv_iterinit(source_hv);
+    if (state_len != STADTX_STATE_BYTES) {
+        croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
+    }
 
+    hv_iterinit(source_hv);
     while (he= hv_iternext(source_hv)) {
+        
+        SV *val_sv= HeVAL(he);
+        SV *val_normalized_sv;
+        SV *val_is_utf8_sv;
+
+        SV *key_sv;
+        SV *key_normalized_sv;
+        SV *key_is_utf8_sv;
+        HV *hv;
+
+        if (!val_sv) croak("no sv?");
+        if (!SvOK(val_sv) && filter_undef_values) continue;
+        if (SvROK(val_sv)) croak("do not know how to handle reference values");
+
+        hv= newHV();
+        val_normalized_sv= newSV(0);
+        val_is_utf8_sv= newSVuv(0);
+
+        key_sv= newSVhek(HeKEY_hek(he));
+        key_normalized_sv= newSV(0);
+        key_is_utf8_sv= newSVuv(0);
+
+        buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
+        buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+        hv_ksplit(hv,15);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    key_is_utf8_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
+
+        av_push(keys_av,newRV_noinc((SV*)hv));
+    }
+
+    if (0)
+        sortsv(AvARRAY(keys_av),bucket_count,_compare);
+
+    for (i=0; i<bucket_count;i++) {
         U8 *key_pv;
         STRLEN key_len;
         U64 h0;
@@ -452,22 +507,17 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv
         U32 h2;
         U32 idx1;
         SV **got_psv;
-
-        SV *key_sv= newSVhek(HeKEY_hek(he));
-        SV *key_normalized_sv= newSV(0);
-        SV *key_is_utf8_sv= newSVuv(0);
-
-        SV *val_sv= HeVAL(he);
-        SV *val_normalized_sv= newSV(0);
-        SV *val_is_utf8_sv= newSVuv(0);
-
-        buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
-        buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+        SV* key_normalized_sv;
+        HE* key_normalized_he;
+        HV *hv;
+        got_psv= av_fetch(keys_av,i,0);
+        if (!got_psv || !SvROK(*got_psv)) croak("bad item in keys_av");
+        hv= (HV *)SvRV(*got_psv);
+        key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
+        if (!key_normalized_he) croak("no key_normalized?");
+        key_normalized_sv= HeVAL(key_normalized_he);
 
         key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
-        if (state_len != STADTX_STATE_BYTES) {
-            croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
-        }
         h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
         h1= h0 >> 32;
         h2= h0 & 0xFFFFFFFF;
@@ -481,8 +531,6 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv
 
         {
             AV *av;
-            SV *ref_sv= newSViv(0);
-            HV *hv= newHV();
 
             got_psv= av_fetch(keybuckets_av,idx1,1);
             if (!got_psv)
@@ -496,17 +544,8 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv
                 av= (AV *)SvRV(*got_psv);
             }
 
-            SvRV_set(ref_sv,(SV*)hv);
-            SvROK_on(ref_sv);
-            av_push(av,ref_sv);
-            hv_ksplit(hv,10);
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    key_is_utf8_sv);
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
+            av_push(av,newRV_inc((SV*)hv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_H0, newSVuv(h0));
         }
     }
     if (buf_length_sv)
@@ -649,7 +688,6 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv
                     if (!SvROK(*buckets_rvp)) {
                         idx1_hv= newHV();
                         if (!idx1_hv) croak("out of memory creating new hash reference");
-                        sv_upgrade(*buckets_rvp,SVt_RV);
                         SvRV_set(*buckets_rvp,(SV *)idx1_hv);
                         SvROK_on(*buckets_rvp);
                     } else {
