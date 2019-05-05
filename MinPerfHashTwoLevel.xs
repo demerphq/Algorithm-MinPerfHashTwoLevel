@@ -501,12 +501,12 @@ compute_xs(bucket_count,max_xor_val,used_pos_sv,state_sv,buf_length_sv,source_hv
             av_push(av,ref_sv);
             hv_ksplit(hv,10);
             hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            SvREFCNT_inc_simple_NN(key_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, SvREFCNT_inc_simple_NN(key_normalized_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    SvREFCNT_inc_simple_NN(key_is_utf8_sv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    key_is_utf8_sv);
             hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, SvREFCNT_inc_simple_NN(val_normalized_sv));
-            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    SvREFCNT_inc_simple_NN(val_is_utf8_sv));
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
+            hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
         }
     }
     if (buf_length_sv)
