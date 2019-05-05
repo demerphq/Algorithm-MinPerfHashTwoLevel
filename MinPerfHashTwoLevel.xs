@@ -459,13 +459,12 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(self_hv,source_hv,buckets_av)
+compute_xs(self_hv,buckets_av)
         HV *self_hv
-        HV* source_hv
         AV *buckets_av
     PREINIT:
         dMY_CXT;
-    PROTOTYPE: \%$\%\@
+    PROTOTYPE: \%\@
     CODE:
 {
     U8 *state_pv;
@@ -491,6 +490,7 @@ compute_xs(self_hv,source_hv,buckets_av)
     U32 compute_flags;
     SV* state_sv;
     SV* buf_length_sv;
+    HV* source_hv;
 
     RETVAL = 0;
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_VARIANT,0);
@@ -523,6 +523,13 @@ compute_xs(self_hv,source_hv,buckets_av)
         buf_length_sv= HeVAL(he);
     } else {
         croak("no buf_length?");
+    }
+    
+    he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_SOURCE_HASH,0);
+    if (he) {
+        source_hv= (HV*)SvRV(HeVAL(he));
+    } else {
+        croak("no source_hash?");
     }
 
 

@@ -112,7 +112,7 @@ sub _compute_first_level_inner {
     my $source_hash= $self->{source_hash};
     my @buckets;
 
-    my $bad_idx= compute_xs($self, $source_hash, \@buckets);
+    my $bad_idx= compute_xs($self, \@buckets);
     if ($bad_idx) {
         printf " Index '%d' not solved.\n", $bad_idx-1;
         return;
