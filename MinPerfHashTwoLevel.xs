@@ -443,18 +443,18 @@ compute_xs(variant,compute_flags,bucket_count,max_xor_val,state_sv,buf_length_sv
     STRLEN state_len;
     HE *he;
 
+    char *used;
+    STRLEN used_len;
+    IV len_idx;
+    U32 buf_length= 0;
+    IV singleton_pos= 0;
+    U32 i;
+    AV *keys_av= (AV *)sv_2mortal((SV*)newAV());
     SV *used_sv= sv_2mortal(newSV(0));
     AV *by_length_av= (AV*)sv_2mortal((SV*)newAV());
     AV *keybuckets_av= (AV*)sv_2mortal((SV*)newAV());
     AV *h2_packed_av= (AV*)sv_2mortal((SV*)newAV());
     SV *idx_sv= sv_2mortal(newSV(20));
-    char *used;
-    STRLEN used_len;
-    IV len_idx;
-    U32 buf_length= 0;
-    U32 i;
-    AV *keys_av= (AV *)sv_2mortal((SV*)newAV());
-    IV singleton_pos= 0;
 
     RETVAL = 0;
     state_pv= (U8 *)SvPV(state_sv,state_len);
