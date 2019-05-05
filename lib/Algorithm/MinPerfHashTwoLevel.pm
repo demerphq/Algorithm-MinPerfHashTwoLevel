@@ -117,7 +117,7 @@ sub _compute_first_level_inner {
     my $filter_undef_values;
     my $compute_flags= $self->{compute_flags} || 0;
 
-    my $bad_idx= compute_xs($variant, $compute_flags, $state, $buf_length, $source_hash, \@buckets);
+    my $bad_idx= compute_xs($self, $buf_length, $source_hash, \@buckets);
     if ($bad_idx) {
         printf " Index '%d' not solved.\n", $bad_idx-1;
         return;

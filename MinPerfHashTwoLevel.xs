@@ -459,16 +459,14 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(variant,compute_flags,state_sv,buf_length_sv,source_hv,buckets_av)
-        U32 variant
-        U32 compute_flags
-        SV* state_sv
+compute_xs(self_hv,buf_length_sv,source_hv,buckets_av)
+        HV *self_hv
         SV* buf_length_sv
         HV* source_hv
         AV *buckets_av
     PREINIT:
         dMY_CXT;
-    PROTOTYPE: $$$$\%\@
+    PROTOTYPE: \%$\%\@
     CODE:
 {
     U8 *state_pv;
@@ -490,10 +488,34 @@ compute_xs(variant,compute_flags,state_sv,buf_length_sv,source_hv,buckets_av)
     AV *h2_packed_av= (AV*)sv_2mortal((SV*)newAV());
     SV *idx_sv= sv_2mortal(newSV(20));
 
+    U32 variant;
+    U32 compute_flags;
+    SV* state_sv;
+
     RETVAL = 0;
-    state_pv= (U8 *)SvPV(state_sv,state_len);
-    if (state_len != STADTX_STATE_BYTES) {
-        croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
+    he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_VARIANT,0);
+    if (he) {
+        variant= SvUV(HeVAL(he));
+    } else {
+        croak("no variant?");
+    }
+
+    he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_COMPUTE_FLAGS,0);
+    if (he) {
+        compute_flags= SvUV(HeVAL(he));
+    } else {
+        croak("no compute_flags?");
+    }
+
+    he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_STATE,0);
+    if (he) {
+        state_sv= HeVAL(he);
+        state_pv= (U8 *)SvPV(state_sv,state_len);
+        if (state_len != STADTX_STATE_BYTES) {
+            croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
+        }
+    } else {
+        croak("no state?");
     }
 
     hv_iterinit(source_hv);
