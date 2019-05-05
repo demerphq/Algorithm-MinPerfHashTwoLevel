@@ -52,6 +52,9 @@ sub new {
         if $o->{seed};
     $o->{variant}= $DEFAULT_VARIANT unless defined $o->{variant};
     $o->{variant}= int(0+$o->{variant});
+    $o->{compute_flags}=0;
+    $o->{compute_flags} += 1 if delete $o->{filter_undef};
+    $o->{compute_flags} += 2 if delete $o->{deterministic};
     die "Unknown variant '$o->{variant}' in constructor new()"
         if ($o->{variant} > 1);
     return $o;
