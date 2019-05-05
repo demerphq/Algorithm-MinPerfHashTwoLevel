@@ -428,8 +428,6 @@ UV
 compute_xs(variant,compute_flags,bucket_count,max_xor_val,state_sv,buf_length_sv,source_hv,buckets_av)
         U32 variant
         U32 compute_flags
-        U32 bucket_count
-        U32 max_xor_val
         SV* state_sv
         SV* buf_length_sv
         HV* source_hv
@@ -448,6 +446,8 @@ compute_xs(variant,compute_flags,bucket_count,max_xor_val,state_sv,buf_length_sv
     IV len_idx;
     U32 buf_length= 0;
     IV singleton_pos= 0;
+    U32 bucket_count= 0;
+    U32 max_xor_val= 0;
     U32 i;
     AV *keys_av= (AV *)sv_2mortal((SV*)newAV());
     SV *used_sv= sv_2mortal(newSV(0));
@@ -506,6 +506,9 @@ compute_xs(variant,compute_flags,bucket_count,max_xor_val,state_sv,buf_length_sv
 
         av_push(keys_av,newRV_noinc((SV*)hv));
     }
+
+    bucket_count= av_top_index(keys_av)+1;
+    max_xor_val= compute_max_xor_val(bucket_count,variant);
 
     if (compute_flags & MPH_F_DETERMINISTIC)
         sortsv(AvARRAY(keys_av),bucket_count,_compare);
