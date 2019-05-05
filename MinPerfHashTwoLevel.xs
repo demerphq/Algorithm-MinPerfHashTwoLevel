@@ -459,9 +459,8 @@ seed_state(base_seed_sv)
 
 
 UV
-compute_xs(self_hv,buckets_av)
+compute_xs(self_hv)
         HV *self_hv
-        AV *buckets_av
     PREINIT:
         dMY_CXT;
     PROTOTYPE: \%\@
@@ -491,6 +490,7 @@ compute_xs(self_hv,buckets_av)
     SV* state_sv;
     SV* buf_length_sv;
     HV* source_hv;
+    AV *buckets_av;
 
     RETVAL = 0;
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_VARIANT,0);
@@ -531,6 +531,21 @@ compute_xs(self_hv,buckets_av)
     } else {
         croak("no source_hash?");
     }
+
+    he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_BUCKETS,1);
+    if (he) {
+        SV *rv= HeVAL(he);
+        if (SvROK(rv)) {
+            AV *old_buckets_av= (AV*)SvRV(rv);
+            SvREFCNT_dec(old_buckets_av);
+        }
+        buckets_av= newAV();
+        SvRV_set(rv,(SV*)buckets_av);
+        SvROK_on(rv);
+    } else {
+        croak("no buckets in self?");
+    }
+
 
 
     hv_iterinit(source_hv);

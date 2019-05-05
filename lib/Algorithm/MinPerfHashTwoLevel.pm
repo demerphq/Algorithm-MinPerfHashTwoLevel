@@ -101,25 +101,19 @@ sub _compute_first_level {
 sub _compute_first_level_inner {
     my ($self)= @_;
     my $debug= $self->{debug};
-    my $state= $self->{state};
-
 
     printf "checking seed %s => state: %s\n", 
         unpack("H*",$self->{seed}), 
         unpack("H*",$self->{state}), 
         if $debug;
 
-    my $source_hash= $self->{source_hash};
-    my @buckets;
-
-    my $bad_idx= compute_xs($self, \@buckets);
+    my $bad_idx= compute_xs($self);
     if ($bad_idx) {
         printf " Index '%d' not solved.\n", $bad_idx-1;
-        return;
+        return undef;
     }
 
-    $self->{buckets}= \@buckets;
-    return \@buckets;
+    return $self->{buckets};
 }
 
 sub compute {
