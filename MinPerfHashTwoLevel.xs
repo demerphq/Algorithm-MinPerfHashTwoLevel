@@ -375,6 +375,89 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
     return av_top_index(keys_av)+1;
 }
 
+void
+find_first_level_collisions(U32 bucket_count, AV *keys_av, AV *keybuckets_av, AV *h2_packed_av) {
+    dMY_CXT;
+    U32 i;
+    for (i=0; i<bucket_count;i++) {
+        U64 h0;
+        U32 h1;
+        U32 h2;
+        U32 idx1;
+        SV **got_psv;
+        SV* h0_sv;
+        HE* h0_he;
+        HV *hv;
+        got_psv= av_fetch(keys_av,i,0);
+        if (!got_psv || !SvROK(*got_psv)) croak("bad item in keys_av");
+        hv= (HV *)SvRV(*got_psv);
+        h0_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_H0,0);
+        if (!h0_he) croak("no h0?");
+        h0_sv= HeVAL(h0_he);
+        h0= SvUV(h0_sv);
+
+        h1= h0 >> 32;
+        h2= h0 & 0xFFFFFFFF;
+        idx1= h1 % bucket_count;
+        got_psv= av_fetch(h2_packed_av,idx1,1);
+        if (!got_psv)
+            croak("panic, out of memory?");
+        if (!SvPOK(*got_psv))
+            sv_setpvs(*got_psv,"");
+        sv_catpvn(*got_psv, (char *)&h2, 4);
+
+        {
+            AV *av;
+
+            got_psv= av_fetch(keybuckets_av,idx1,1);
+            if (!got_psv)
+                croak("oom");
+
+            if (!SvROK(*got_psv)) {
+                av= newAV();
+                sv_upgrade(*got_psv,SVt_RV);
+                SvRV_set(*got_psv,(SV *)av);
+                SvROK_on(*got_psv);
+            } else {
+                av= (AV *)SvRV(*got_psv);
+            }
+
+            av_push(av,newRV_inc((SV*)hv));
+        }
+    }
+}
+
+AV *
+idx_by_length(pTHX_ AV *keybuckets_av) {
+    U32 i;
+    U32 keybuckets_count= av_top_index(keybuckets_av) + 1;
+    AV *by_length_av= (AV*)sv_2mortal((SV*)newAV());
+    for( i = 0 ; i < keybuckets_count ; i++ ) {
+        SV **got= av_fetch(keybuckets_av,i,0);
+        AV *keys_av;
+        SV *keys_ref;
+        AV *target_av;
+        IV len;
+        if (!got) continue;
+        keys_av= (AV *)SvRV(*got);
+        len= av_top_index(keys_av) + 1;
+        if (len<1) continue;
+
+        got= av_fetch(by_length_av,len,1);
+        if (SvROK(*got)) {
+            target_av= (AV*)SvRV(*got);
+        } else {
+            target_av= newAV();
+            sv_upgrade(*got,SVt_RV);
+            SvRV_set(*got, (SV*)target_av);
+            SvROK_on(*got);
+        }
+        av_push(target_av, newSVuv(i));
+    }
+    return by_length_av;
+}
+
+
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
 
 #define SETOFS(i,he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_ofs_hv)    \
@@ -623,52 +706,7 @@ compute_xs(self_hv)
      **** collision data */
     keybuckets_av= (AV*)sv_2mortal((SV*)newAV()); /* AoAoH - hashes from keys_av */
     h2_packed_av= (AV*)sv_2mortal((SV*)newAV());  /* AoS - packed h1 */
-    for (i=0; i<bucket_count;i++) {
-        U64 h0;
-        U32 h1;
-        U32 h2;
-        U32 idx1;
-        SV **got_psv;
-        SV* h0_sv;
-        HE* h0_he;
-        HV *hv;
-        got_psv= av_fetch(keys_av,i,0);
-        if (!got_psv || !SvROK(*got_psv)) croak("bad item in keys_av");
-        hv= (HV *)SvRV(*got_psv);
-        h0_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_H0,0);
-        if (!h0_he) croak("no h0?");
-        h0_sv= HeVAL(h0_he);
-        h0= SvUV(h0_sv);
-
-        h1= h0 >> 32;
-        h2= h0 & 0xFFFFFFFF;
-        idx1= h1 % bucket_count;
-        got_psv= av_fetch(h2_packed_av,idx1,1);
-        if (!got_psv)
-            croak("panic, out of memory?");
-        if (!SvPOK(*got_psv))
-            sv_setpvs(*got_psv,"");
-        sv_catpvn(*got_psv, (char *)&h2, 4);
-
-        {
-            AV *av;
-
-            got_psv= av_fetch(keybuckets_av,idx1,1);
-            if (!got_psv)
-                croak("oom");
-
-            if (!SvROK(*got_psv)) {
-                av= newAV();
-                sv_upgrade(*got_psv,SVt_RV);
-                SvRV_set(*got_psv,(SV *)av);
-                SvROK_on(*got_psv);
-            } else {
-                av= (AV *)SvRV(*got_psv);
-            }
-
-            av_push(av,newRV_inc((SV*)hv));
-        }
-    }
+    find_first_level_collisions(aTHX_ bucket_count, keys_av, keybuckets_av, h2_packed_av);
 
     /* Sort the buckets by size by constructing an AoA, with the outer array indexed by length,
      * and the inner array being the list of items of that length. (Thus the contents of index
@@ -676,29 +714,7 @@ compute_xs(self_hv)
      * The end result is we can process the collisions from the most keys to a bucket to the
      * least in O(N) and not O(N log2 N).
      */
-    by_length_av= (AV*)sv_2mortal((SV*)newAV());
-    for( i = 0 ; i < bucket_count ; i++ ) {
-        SV **got= av_fetch(keybuckets_av,i,0);
-        AV *keys_av;
-        SV *keys_ref;
-        AV *target_av;
-        IV len;
-        if (!got) continue;
-        keys_av= (AV *)SvRV(*got);
-        len= av_top_index(keys_av) + 1;
-        if (len<1) continue;
-
-        got= av_fetch(by_length_av,len,1);
-        if (SvROK(*got)) {
-            target_av= (AV*)SvRV(*got);
-        } else {
-            target_av= newAV();
-            sv_upgrade(*got,SVt_RV);
-            SvRV_set(*got, (SV*)target_av);
-            SvROK_on(*got);
-        }
-        av_push(target_av, newSVuv(i));
-    }
+    by_length_av= idx_by_length(aTHX_ keybuckets_av);
 
     /* this is used to quickly tell if we have used a particular bucket yet */
     used_sv= sv_2mortal(newSV(0));
