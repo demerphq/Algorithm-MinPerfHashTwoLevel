@@ -608,27 +608,29 @@ compute_xs(self_hv)
     STRLEN state_len;
     HE *he;
 
+    I32 singleton_pos= 0;
+
     char *is_used;
+    U32 *idx_start;
 
     IV len_idx;
 
-    I32 singleton_pos= 0;
     U32 bucket_count;
     U32 max_xor_val;
     U32 i;
 
     U32 variant;
     U32 compute_flags;
-    SV* state_sv;
-    SV* buf_length_sv;
-    HV* source_hv;
-    AV *buckets_av;
 
+    SV* buf_length_sv;
+
+    HV* source_hv;
+
+    AV *buckets_av;
     AV *keys_av;
     AV *by_length_av;
     AV *keybuckets_av;
     AV *h2_packed_av;
-    U32 *idx_start;
 
     RETVAL = 0;
 
@@ -650,7 +652,7 @@ compute_xs(self_hv)
 
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_STATE,0);
     if (he) {
-        state_sv= HeVAL(he);
+        SV *state_sv= HeVAL(he);
         state_pv= (U8 *)SvPV(state_sv,state_len);
         if (state_len != STADTX_STATE_BYTES) {
             croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
@@ -699,7 +701,6 @@ compute_xs(self_hv)
      * the keys we might resolve the collisions differently */
     if (compute_flags & MPH_F_DETERMINISTIC)
         sortsv(AvARRAY(keys_av),bucket_count,_compare);
-
 
     /**** find the collisions from the data we just computed, build an AoAoH and AoS of the
      **** collision data */
