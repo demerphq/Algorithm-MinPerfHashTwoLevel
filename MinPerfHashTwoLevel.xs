@@ -608,8 +608,8 @@ compute_xs(self_hv)
     STRLEN state_len;
     HE *he;
 
-    char *used;
-    STRLEN used_len;
+    char *is_used;
+
     IV len_idx;
 
     I32 singleton_pos= 0;
@@ -625,7 +625,6 @@ compute_xs(self_hv)
     AV *buckets_av;
 
     AV *keys_av;
-    SV *used_sv;
     AV *by_length_av;
     AV *keybuckets_av;
     AV *h2_packed_av;
@@ -717,17 +716,8 @@ compute_xs(self_hv)
     by_length_av= idx_by_length(aTHX_ keybuckets_av);
 
     /* this is used to quickly tell if we have used a particular bucket yet */
-    used_sv= sv_2mortal(newSV(0));
-    if (!SvPOK(used_sv)) {
-        sv_setpvs(used_sv,"");
-        sv_grow(used_sv,bucket_count);
-        SvCUR_set(used_sv,bucket_count);
-        SvPOK_on(used_sv);
-        used= SvPV_force(used_sv,used_len);
-        Zero(used,bucket_count,char);
-    } else {
-        used= SvPV_force(used_sv,used_len);
-    }
+    Newxz(is_used,bucket_count,char);
+    SAVEFREEPV(is_used);
 
     /* used to keep track the indexes that a set of keys map into
      * stored in an SV just because - we actually treat it as an array of U32 */
@@ -784,7 +774,7 @@ compute_xs(self_hv)
                 idx_start= (U32 *)SvPVX(idx_sv);
 
                 if (h2_count == 1 && variant) {
-                    while (singleton_pos < bucket_count && used[singleton_pos]) {
+                    while (singleton_pos < bucket_count && is_used[singleton_pos]) {
                         singleton_pos++;
                     }
                     if (singleton_pos == bucket_count) {
@@ -807,7 +797,7 @@ compute_xs(self_hv)
                         while (h2_ptr < h2_end) {
                             U32 i= (*h2_ptr ^ xor_val) % bucket_count;
                             U32 *check_idx;
-                            if (used[i])
+                            if (is_used[i])
                                 goto next_xor_val;
                             for (check_idx= idx_start; check_idx < idx_ptr; check_idx++) {
                                 if (*check_idx == i)
@@ -871,7 +861,7 @@ compute_xs(self_hv)
 
                         hv_setuv_with_keysv(keys_hv,MPH_KEYSV_IDX,*idx2);
 
-                        used[*idx2] = 1;
+                        is_used[*idx2] = 1;
                     }
                 } else {
                     RETVAL = idx1 + 1;
