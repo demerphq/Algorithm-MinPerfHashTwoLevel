@@ -473,17 +473,12 @@ compute_xs(self_hv)
     char *used;
     STRLEN used_len;
     IV len_idx;
+
     U32 buf_length= 0;
-    IV singleton_pos= 0;
-    U32 bucket_count= 0;
-    U32 max_xor_val= 0;
+    I32 singleton_pos= 0;
+    U32 bucket_count;
+    U32 max_xor_val;
     U32 i;
-    AV *keys_av= (AV *)sv_2mortal((SV*)newAV());
-    SV *used_sv= sv_2mortal(newSV(0));
-    AV *by_length_av= (AV*)sv_2mortal((SV*)newAV());
-    AV *keybuckets_av= (AV*)sv_2mortal((SV*)newAV());
-    AV *h2_packed_av= (AV*)sv_2mortal((SV*)newAV());
-    SV *idx_sv= sv_2mortal(newSV(20));
 
     U32 variant;
     U32 compute_flags;
@@ -492,7 +487,17 @@ compute_xs(self_hv)
     HV* source_hv;
     AV *buckets_av;
 
+    AV *keys_av;
+    SV *used_sv;
+    AV *by_length_av;
+    AV *keybuckets_av;
+    AV *h2_packed_av;
+    SV *idx_sv;
+
     RETVAL = 0;
+
+    /**** extract the various reference data we need from $self */
+
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_VARIANT,0);
     if (he) {
         variant= SvUV(HeVAL(he));
@@ -538,6 +543,8 @@ compute_xs(self_hv)
         if (SvROK(rv)) {
             AV *old_buckets_av= (AV*)SvRV(rv);
             SvREFCNT_dec(old_buckets_av);
+        } else {
+            sv_upgrade(rv, SVt_RV);
         }
         buckets_av= newAV();
         SvRV_set(rv,(SV*)buckets_av);
@@ -546,8 +553,8 @@ compute_xs(self_hv)
         croak("no buckets in self?");
     }
 
-
-
+    /**** build an array of hashes in keys_av based on the normalized contents of source_hv */
+    keys_av= (AV *)sv_2mortal((SV*)newAV());
     hv_iterinit(source_hv);
     while (he= hv_iternext(source_hv)) {
         
@@ -593,12 +600,21 @@ compute_xs(self_hv)
         av_push(keys_av,newRV_noinc((SV*)hv));
     }
 
+    /* we now know how many keys there are, and what the max_xor_val should be */
     bucket_count= av_top_index(keys_av)+1;
     max_xor_val= compute_max_xor_val(bucket_count,variant);
 
+    /* if the caller wants deterministic results we sort the keys_av
+     * before we compute collisions - depending on the order we process
+     * the keys we might resolve the collisions differently */
     if (compute_flags & MPH_F_DETERMINISTIC)
         sortsv(AvARRAY(keys_av),bucket_count,_compare);
 
+
+    /**** find the collisions from the data we just computed, build an AoAoH and AoS of the
+     **** collision data */
+    keybuckets_av= (AV*)sv_2mortal((SV*)newAV()); /* AoAoH - hashes from keys_av */
+    h2_packed_av= (AV*)sv_2mortal((SV*)newAV());  /* AoS - packed h1 */
     for (i=0; i<bucket_count;i++) {
         U64 h0;
         U32 h1;
@@ -635,6 +651,7 @@ compute_xs(self_hv)
 
             if (!SvROK(*got_psv)) {
                 av= newAV();
+                sv_upgrade(*got_psv,SVt_RV);
                 SvRV_set(*got_psv,(SV *)av);
                 SvROK_on(*got_psv);
             } else {
@@ -644,8 +661,8 @@ compute_xs(self_hv)
             av_push(av,newRV_inc((SV*)hv));
         }
     }
-    if (buf_length_sv)
-        sv_setuv(buf_length_sv,buf_length);
+    /* remember how long the strings were - we will use this data later */
+    sv_setuv(buf_length_sv,buf_length);
 
     /* Sort the buckets by size by constructing an AoA, with the outer array indexed by length,
      * and the inner array being the list of items of that length. (Thus the contents of index
@@ -653,7 +670,7 @@ compute_xs(self_hv)
      * The end result is we can process the collisions from the most keys to a bucket to the
      * least in O(N) and not O(N log2 N).
      */
-
+    by_length_av= (AV*)sv_2mortal((SV*)newAV());
     for( i = 0 ; i < bucket_count ; i++ ) {
         SV **got= av_fetch(keybuckets_av,i,0);
         AV *keys_av;
@@ -670,12 +687,15 @@ compute_xs(self_hv)
             target_av= (AV*)SvRV(*got);
         } else {
             target_av= newAV();
+            sv_upgrade(*got,SVt_RV);
             SvRV_set(*got, (SV*)target_av);
             SvROK_on(*got);
         }
         av_push(target_av, newSVuv(i));
     }
 
+    /* this is used to quickly tell if we have used a particular bucket yet */
+    used_sv= sv_2mortal(newSV(0));
     if (!SvPOK(used_sv)) {
         sv_setpvs(used_sv,"");
         sv_grow(used_sv,bucket_count);
@@ -687,14 +707,21 @@ compute_xs(self_hv)
         used= SvPV_force(used_sv,used_len);
     }
 
+    /* used to keep track the indexes that a set of keys map into
+     * stored in an SV just because - we actually treat it as an array of U32 */
+    idx_sv= sv_2mortal(newSV(20));
     SvPOK_on(idx_sv);
     SvCUR_set(idx_sv,0);
 
+    /* now loop through and process the keysets from most collisions to least */
     for (len_idx= av_top_index(by_length_av); len_idx > 0 && !RETVAL; len_idx--) {
         IV idx1_idx;
         IV top_idx1;
         AV *idx1_av;
         SV **got_idx_ary= av_fetch(by_length_av, len_idx, 0);
+        /* deal with the possibility that there are gaps in the length grouping,
+         * for instance we might have some 13 way collisions and some 11 way collisions
+         * without any 12-way collisions. (this should be rare - but is possible) */
         if (!got_idx_ary || !SvROK(*got_idx_ary))
             continue;
         idx1_av= (AV*)SvRV(*got_idx_ary);
@@ -781,6 +808,7 @@ compute_xs(self_hv)
                     if (!SvROK(*buckets_rvp)) {
                         idx1_hv= newHV();
                         if (!idx1_hv) croak("out of memory creating new hash reference");
+                        sv_upgrade(*buckets_rvp,SVt_RV);
                         SvRV_set(*buckets_rvp,(SV *)idx1_hv);
                         SvROK_on(*buckets_rvp);
                     } else {
