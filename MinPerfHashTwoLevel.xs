@@ -628,7 +628,7 @@ compute_xs(self_hv)
     AV *by_length_av;
     AV *keybuckets_av;
     AV *h2_packed_av;
-    SV *idx_sv;
+    U32 *idx_start;
 
     RETVAL = 0;
 
@@ -712,6 +712,9 @@ compute_xs(self_hv)
      * 0 is empty/undef).
      * The end result is we can process the collisions from the most keys to a bucket to the
      * least in O(N) and not O(N log2 N).
+     *
+     * the length of the array (av_top_index+1) reflect the number of items in the bucket
+     * with the most collisions - we use this later to size some of our data structures.
      */
     by_length_av= idx_by_length(aTHX_ keybuckets_av);
 
@@ -721,9 +724,8 @@ compute_xs(self_hv)
 
     /* used to keep track the indexes that a set of keys map into
      * stored in an SV just because - we actually treat it as an array of U32 */
-    idx_sv= sv_2mortal(newSV(20));
-    SvPOK_on(idx_sv);
-    SvCUR_set(idx_sv,0);
+    Newxz(idx_start, av_top_index(by_length_av)+1, U32);
+    SAVEFREEPV(idx_start);
 
     /* now loop through and process the keysets from most collisions to least */
     for (len_idx= av_top_index(by_length_av); len_idx > 0 && !RETVAL; len_idx--) {
@@ -767,11 +769,6 @@ compute_xs(self_hv)
                 U32 *h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
                 STRLEN h2_count= h2_strlen / sizeof(U32);
                 U32 *h2_end= h2_start + h2_count;
-                U32 *idx_start;
-
-                SvGROW(idx_sv,h2_strlen);
-                SvCUR_set(idx_sv,h2_strlen);
-                idx_start= (U32 *)SvPVX(idx_sv);
 
                 if (h2_count == 1 && variant) {
                     while (singleton_pos < bucket_count && is_used[singleton_pos]) {
