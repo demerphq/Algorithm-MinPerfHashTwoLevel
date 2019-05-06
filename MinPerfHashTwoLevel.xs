@@ -320,6 +320,61 @@ _compare(pTHX_ SV *a, SV *b) {
     return sv_cmp(HeVAL(a_he),HeVAL(b_he));
 }
 
+U32 
+normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *buf_length_sv, char *state_pv) {
+    dMY_CXT;
+    HE *he;
+    U32 buf_length= 0;
+    hv_iterinit(source_hv);
+    while (he= hv_iternext(source_hv)) {
+        SV *val_sv= HeVAL(he);
+        SV *val_normalized_sv;
+        SV *val_is_utf8_sv;
+
+        SV *key_sv;
+        SV *key_normalized_sv;
+        SV *key_is_utf8_sv;
+        HV *hv;
+        U8 *key_pv;
+        STRLEN key_len;
+        U64 h0;
+
+        if (!val_sv) croak("no sv?");
+        if (!SvOK(val_sv) && (compute_flags & MPH_F_FILTER_UNDEF)) continue;
+        if (SvROK(val_sv)) croak("do not know how to handle reference values");
+
+        hv= newHV();
+        val_normalized_sv= newSV(0);
+        val_is_utf8_sv= newSVuv(0);
+
+        key_sv= newSVhek(HeKEY_hek(he));
+        key_normalized_sv= newSV(0);
+        key_is_utf8_sv= newSVuv(0);
+
+        buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
+        buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+        
+        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
+        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
+        
+        hv_ksplit(hv,15);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    key_is_utf8_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
+        hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
+
+        av_push(keys_av,newRV_noinc((SV*)hv));
+    }
+    if (buf_length_sv)
+        sv_setuv(buf_length_sv, buf_length);
+
+    /* we now know how many keys there are, and what the max_xor_val should be */
+    return av_top_index(keys_av)+1;
+}
+
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
 
 #define SETOFS(i,he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_ofs_hv)    \
@@ -474,7 +529,6 @@ compute_xs(self_hv)
     STRLEN used_len;
     IV len_idx;
 
-    U32 buf_length= 0;
     I32 singleton_pos= 0;
     U32 bucket_count;
     U32 max_xor_val;
@@ -555,53 +609,7 @@ compute_xs(self_hv)
 
     /**** build an array of hashes in keys_av based on the normalized contents of source_hv */
     keys_av= (AV *)sv_2mortal((SV*)newAV());
-    hv_iterinit(source_hv);
-    while (he= hv_iternext(source_hv)) {
-        
-        SV *val_sv= HeVAL(he);
-        SV *val_normalized_sv;
-        SV *val_is_utf8_sv;
-
-        SV *key_sv;
-        SV *key_normalized_sv;
-        SV *key_is_utf8_sv;
-        HV *hv;
-        U8 *key_pv;
-        STRLEN key_len;
-        U64 h0;
-
-        if (!val_sv) croak("no sv?");
-        if (!SvOK(val_sv) && (compute_flags & MPH_F_FILTER_UNDEF)) continue;
-        if (SvROK(val_sv)) croak("do not know how to handle reference values");
-
-        hv= newHV();
-        val_normalized_sv= newSV(0);
-        val_is_utf8_sv= newSVuv(0);
-
-        key_sv= newSVhek(HeKEY_hek(he));
-        key_normalized_sv= newSV(0);
-        key_is_utf8_sv= newSVuv(0);
-
-        buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
-        buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
-        
-        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
-        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
-        
-        hv_ksplit(hv,15);
-        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
-        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
-        hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,    key_is_utf8_sv);
-        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
-        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
-        hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
-        hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
-
-        av_push(keys_av,newRV_noinc((SV*)hv));
-    }
-
-    /* we now know how many keys there are, and what the max_xor_val should be */
-    bucket_count= av_top_index(keys_av)+1;
+    bucket_count= normalize_source_hash(aTHX_ source_hv, keys_av, compute_flags, buf_length_sv, state_pv);
     max_xor_val= compute_max_xor_val(bucket_count,variant);
 
     /* if the caller wants deterministic results we sort the keys_av
@@ -661,8 +669,6 @@ compute_xs(self_hv)
             av_push(av,newRV_inc((SV*)hv));
         }
     }
-    /* remember how long the strings were - we will use this data later */
-    sv_setuv(buf_length_sv,buf_length);
 
     /* Sort the buckets by size by constructing an AoA, with the outer array indexed by length,
      * and the inner array being the list of items of that length. (Thus the contents of index
@@ -966,8 +972,9 @@ packed(version_sv,buf_length_sv,state_sv,comment_sv,buckets_av)
     head->table_checksum= stadtx_hash_with_state(state_pv,start + head->table_ofs,head->str_buf_ofs - head->table_ofs);
     head->str_buf_checksum= stadtx_hash_with_state(state_pv,str_buf_start,str_buf_pos - str_buf_start);
     if (SvLEN(sv_buf)<str_buf_pos - start)
-        croak("bad mojo %lu:%lu (total:%u,header:%u,state:%u,table:%u,key_flags:%u,val_flags:%u,str:%u)",
-            SvLEN(sv_buf),str_buf_pos - start,
+        croak("bad mojo in str buf construction. got:%lu want:%lu (total:%u,header:%u,state:%u,table:%u,key_flags:%u,val_flags:%u,str:%u)",
+            SvLEN(sv_buf),
+            str_buf_pos - start,
             total_size,
             header_rlen,
             state_rlen,
