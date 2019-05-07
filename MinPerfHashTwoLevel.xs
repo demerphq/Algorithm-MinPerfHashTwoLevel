@@ -945,58 +945,7 @@ compute_xs(self_hv)
                     }
                 }
                 if (xor_val) {
-                    U32 *idx2;
-                    HV *idx1_hv;
-                    U32 i;
-
-                    SV **buckets_rvp= av_fetch(buckets_av, idx1, 1);
-                    if (!buckets_rvp) croak("out of memory in buckets_av lvalue fetch");
-                    if (!SvROK(*buckets_rvp)) {
-                        idx1_hv= newHV();
-                        if (!idx1_hv) croak("out of memory creating new hash reference");
-                        sv_upgrade(*buckets_rvp,SVt_RV);
-                        SvRV_set(*buckets_rvp,(SV *)idx1_hv);
-                        SvROK_on(*buckets_rvp);
-                    } else {
-                         idx1_hv= (HV *)SvRV(*buckets_rvp);
-                    }
-
-                    hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_XOR_VAL,xor_val);
-                    hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_H1_KEYS,h2_count);
-
-                    /* update used */
-                    for (i= 0, idx2= idx_start; i < h2_count; i++,idx2++) {
-                        HV *idx2_hv;
-                        HV *keys_hv;
-
-                        SV **keys_rvp;
-                        SV **buckets_rvp;
-
-                        keys_rvp= av_fetch(keys_av, i, 0);
-                        if (!keys_rvp) croak("no key_info in bucket %d", i);
-                        keys_hv= (HV *)SvRV(*keys_rvp);
-
-                        buckets_rvp= av_fetch(buckets_av, *idx2, 1);
-                        if (!buckets_rvp) croak("out of memory?");
-
-                        if (!SvROK(*buckets_rvp)) {
-                            sv_upgrade(*buckets_rvp,SVt_RV);
-                        } else {
-                            idx2_hv= (HV *)SvRV(*buckets_rvp);
-
-                            hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_XOR_VAL);
-                            hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_H1_KEYS);
-                            SvREFCNT_dec(idx2_hv);
-                        }
-
-                        SvRV_set(*buckets_rvp,(SV*)keys_hv);
-                        SvROK_on(*buckets_rvp);
-                        SvREFCNT_inc(keys_hv);
-
-                        hv_setuv_with_keysv(keys_hv,MPH_KEYSV_IDX,*idx2);
-
-                        is_used[*idx2] = 1;
-                    }
+                    set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, h2_count, idx_start, is_used, keys_av);
                 } else {
                     RETVAL = idx1 + 1;
                     break;
