@@ -594,23 +594,20 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
 }
 
 U32
-place_singletons(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx_start, AV *buckets_av) {
+place_singletons(pTHX_ U32 bucket_count, AV *idx1_av, AV *keybuckets_av, char *is_used, U32 *idx_start, AV *buckets_av) {
     IV idx1_idx;
     IV top_idx1= av_top_index(idx1_av);
     U32 singleton_pos= 0;
     if (top_idx1 < 0) croak("empty index array?");
 
-    for (idx1_idx=0; idx1_idx <= top_idx1; idx1_idx++) {
+    for (idx1_idx= 0; idx1_idx <= top_idx1; idx1_idx++) {
         U32 idx1;
-        SV **got= av_fetch(idx1_av, idx1_idx, 0);
-        SV *h2_sv;
-        AV *keys_av;
         U32 xor_val= 0;
+        SV **got= av_fetch(idx1_av, idx1_idx, 0);
 
         if (!got)
             croak("panic: no idx1_av element for idx %ld",idx1_idx);
         idx1= SvUV(*got);
-
 
         while (singleton_pos < bucket_count && is_used[singleton_pos]) {
             (singleton_pos)++;
@@ -618,13 +615,14 @@ place_singletons(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
         if (singleton_pos == bucket_count) {
             return idx1 + 1;
         } else {
+            AV *keys_in_bucket_av;
             *idx_start= singleton_pos;
             xor_val= (U32)(-singleton_pos-1);
             got= av_fetch(keybuckets_av, idx1, 0);
             if (!got)
                 croak("panic: no keybuckets_av for idx %u",idx1);
-            keys_av= (AV *)SvRV(*got);
-            set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_av);
+            keys_in_bucket_av= (AV *)SvRV(*got);
+            set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
         }
 
     }
@@ -658,9 +656,14 @@ solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_lengt
         if (!got_idx_ary || !SvROK(*got_idx_ary))
             continue;
         idx1_av= (AV*)SvRV(*got_idx_ary);
-        
-        bad_idx= solve_collisions(aTHX_ bucket_count, max_xor_val, idx1_av, h2_packed_av, keybuckets_av, 
-            variant, &singleton_pos, is_used, idx_start, buckets_av);
+
+        if (len_idx == 1 && variant) {
+            bad_idx= place_singletons(aTHX_ bucket_count, idx1_av, keybuckets_av,
+                is_used, idx_start, buckets_av);
+        } else {
+            bad_idx= solve_collisions(aTHX_ bucket_count, max_xor_val, idx1_av, h2_packed_av, keybuckets_av,
+                variant, &singleton_pos, is_used, idx_start, buckets_av);
+        }
     }
     return bad_idx;
 }
