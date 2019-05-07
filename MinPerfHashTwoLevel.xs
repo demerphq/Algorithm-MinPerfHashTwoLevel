@@ -515,17 +515,23 @@ void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *id
 }
 
 U32
-solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, I32 *singleton_pos, char *is_used, U32 *idx_start,AV *buckets_av) {
+solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx_start,AV *buckets_av) {
     IV idx1_idx;
     IV top_idx1= av_top_index(idx1_av);
     if (top_idx1 < 0) croak("empty index array?");
 
     for (idx1_idx=0; idx1_idx <= top_idx1; idx1_idx++) {
         U32 idx1;
-        SV **got= av_fetch(idx1_av, idx1_idx, 0);
         SV *h2_sv;
         AV *keys_in_bucket_av;
+        U32 xor_val= 0;
+        STRLEN h2_strlen;
+        U32 *h2_start;
+        STRLEN keys_in_bucket_count;
+        U32 *h2_end;
+        SV **got;
 
+        got= av_fetch(idx1_av, idx1_idx, 0);
         if (!got)
             croak("panic: no idx1_av element for idx %ld",idx1_idx);
         idx1= SvUV(*got);
@@ -540,55 +546,35 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
             croak("panic: no keybuckets_av for idx %u",idx1);
         keys_in_bucket_av= (AV *)SvRV(*got);
 
-        {
-            U32 xor_val= 0;
-            STRLEN h2_strlen;
-            U32 *h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
-            STRLEN keys_in_bucket_count= h2_strlen / sizeof(U32);
-            U32 *h2_end= h2_start + keys_in_bucket_count;
+        h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
+        keys_in_bucket_count= h2_strlen / sizeof(U32);
+        h2_end= h2_start + keys_in_bucket_count;
 
-            if (keys_in_bucket_count == 1 && variant) {
-                while (*singleton_pos < bucket_count && is_used[*singleton_pos]) {
-                    (*singleton_pos)++;
-                }
-                if (*singleton_pos == bucket_count) {
-                    xor_val= 0;
-                } else {
-                    *idx_start= *singleton_pos;
-                    xor_val= (U32)(-(*singleton_pos)-1);
-                }
-            } else {
-                next_xor_val:
-                while (1) {
-                    U32 *h2_ptr= h2_start;
-                    U32 *idx_ptr= idx_start;
-                    if (xor_val == max_xor_val) {
-                        return idx1 + 1;
-                    } else {
-                        xor_val++;
-                    }
-                    while (h2_ptr < h2_end) {
-                        U32 i= (*h2_ptr ^ xor_val) % bucket_count;
-                        U32 *check_idx;
-                        if (is_used[i])
-                            goto next_xor_val;
-                        for (check_idx= idx_start; check_idx < idx_ptr; check_idx++) {
-                            if (*check_idx == i)
-                                goto next_xor_val;
-                        }
-                        *idx_ptr= i;
-                        h2_ptr++;
-                        idx_ptr++;
-                    }
-                    break;
-                }
-            }
-            if (xor_val) {
-                set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
-            } else {
+        next_xor_val:
+        while (1) {
+            U32 *h2_ptr= h2_start;
+            U32 *idx_ptr= idx_start;
+            if (xor_val == max_xor_val) {
                 return idx1 + 1;
+            } else {
+                xor_val++;
             }
+            while (h2_ptr < h2_end) {
+                U32 i= (*h2_ptr ^ xor_val) % bucket_count;
+                U32 *check_idx;
+                if (is_used[i])
+                    goto next_xor_val;
+                for (check_idx= idx_start; check_idx < idx_ptr; check_idx++) {
+                    if (*check_idx == i)
+                        goto next_xor_val;
+                }
+                *idx_ptr= i;
+                h2_ptr++;
+                idx_ptr++;
+            }
+            break;
         }
+        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
     }
     return 0;
 }
@@ -602,29 +588,27 @@ place_singletons(pTHX_ U32 bucket_count, AV *idx1_av, AV *keybuckets_av, char *i
 
     for (idx1_idx= 0; idx1_idx <= top_idx1; idx1_idx++) {
         U32 idx1;
-        U32 xor_val= 0;
         SV **got= av_fetch(idx1_av, idx1_idx, 0);
+        AV *keys_in_bucket_av;
+        U32 xor_val;
 
         if (!got)
             croak("panic: no idx1_av element for idx %ld",idx1_idx);
         idx1= SvUV(*got);
 
         while (singleton_pos < bucket_count && is_used[singleton_pos]) {
-            (singleton_pos)++;
+            singleton_pos++;
         }
-        if (singleton_pos == bucket_count) {
+        if (singleton_pos == bucket_count)
             return idx1 + 1;
-        } else {
-            AV *keys_in_bucket_av;
-            *idx_start= singleton_pos;
-            xor_val= (U32)(-singleton_pos-1);
-            got= av_fetch(keybuckets_av, idx1, 0);
-            if (!got)
-                croak("panic: no keybuckets_av for idx %u",idx1);
-            keys_in_bucket_av= (AV *)SvRV(*got);
-            set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
-        }
 
+        xor_val= (U32)(-singleton_pos-1);
+        got= av_fetch(keybuckets_av, idx1, 0);
+        if (!got)
+            croak("panic: no keybuckets_av for idx %u",idx1);
+        keys_in_bucket_av= (AV *)SvRV(*got);
+        *idx_start= singleton_pos;
+        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
     }
     return 0;
 }
@@ -662,7 +646,7 @@ solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_lengt
                 is_used, idx_start, buckets_av);
         } else {
             bad_idx= solve_collisions(aTHX_ bucket_count, max_xor_val, idx1_av, h2_packed_av, keybuckets_av,
-                variant, &singleton_pos, is_used, idx_start, buckets_av);
+                variant, is_used, idx_start, buckets_av);
         }
     }
     return bad_idx;
