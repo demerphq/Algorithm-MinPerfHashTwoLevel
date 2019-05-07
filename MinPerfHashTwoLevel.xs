@@ -250,7 +250,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj) {
     obj->fd= fd;
 }
 
-void 
+void
 mph_munmap(struct mph_obj *obj) {
     munmap(obj->header,obj->bytes);
     close(obj->fd);
@@ -320,7 +320,7 @@ _compare(pTHX_ SV *a, SV *b) {
     return sv_cmp(HeVAL(a_he),HeVAL(b_he));
 }
 
-U32 
+U32
 normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *buf_length_sv, char *state_pv) {
     dMY_CXT;
     HE *he;
@@ -353,10 +353,10 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
 
         buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
         buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
-        
+
         key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
         h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
-        
+
         hv_ksplit(hv,15);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
@@ -457,6 +457,142 @@ idx_by_length(pTHX_ AV *keybuckets_av) {
     return by_length_av;
 }
 
+void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 h2_count, U32 *idx_start, char *is_used, AV *keys_av) {
+    dMY_CXT;
+    U32 *idx2;
+    HV *idx1_hv;
+    U32 i;
+
+    SV **buckets_rvp= av_fetch(buckets_av, idx1, 1);
+    if (!buckets_rvp) croak("out of memory in buckets_av lvalue fetch");
+    if (!SvROK(*buckets_rvp)) {
+        idx1_hv= newHV();
+        if (!idx1_hv) croak("out of memory creating new hash reference");
+        sv_upgrade(*buckets_rvp,SVt_RV);
+        SvRV_set(*buckets_rvp,(SV *)idx1_hv);
+        SvROK_on(*buckets_rvp);
+    } else {
+         idx1_hv= (HV *)SvRV(*buckets_rvp);
+    }
+
+    hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_XOR_VAL,xor_val);
+    hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_H1_KEYS,h2_count);
+
+    /* update used */
+    for (i= 0, idx2= idx_start; i < h2_count; i++,idx2++) {
+        HV *idx2_hv;
+        HV *keys_hv;
+
+        SV **keys_rvp;
+        SV **buckets_rvp;
+
+        keys_rvp= av_fetch(keys_av, i, 0);
+        if (!keys_rvp) croak("no key_info in bucket %d", i);
+        keys_hv= (HV *)SvRV(*keys_rvp);
+
+        buckets_rvp= av_fetch(buckets_av, *idx2, 1);
+        if (!buckets_rvp) croak("out of memory?");
+
+        if (!SvROK(*buckets_rvp)) {
+            sv_upgrade(*buckets_rvp,SVt_RV);
+        } else {
+            idx2_hv= (HV *)SvRV(*buckets_rvp);
+
+            hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_XOR_VAL);
+            hv_copy_with_keysv(idx2_hv,keys_hv,MPH_KEYSV_H1_KEYS);
+            SvREFCNT_dec(idx2_hv);
+        }
+
+        SvRV_set(*buckets_rvp,(SV*)keys_hv);
+        SvROK_on(*buckets_rvp);
+        SvREFCNT_inc(keys_hv);
+
+        hv_setuv_with_keysv(keys_hv,MPH_KEYSV_IDX,*idx2);
+
+        is_used[*idx2] = 1;
+    }
+}
+
+U32
+solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, I32 *singleton_pos, char *is_used, U32 *idx_start,AV *buckets_av) {
+    dMY_CXT;
+    U32 top_idx1= av_top_index(idx1_av);
+    IV idx1_idx;
+    if (top_idx1 < 0) croak("empty index array?");
+
+    for (idx1_idx=0; idx1_idx <= top_idx1; idx1_idx++) {
+        U32 idx1;
+        SV **got= av_fetch(idx1_av, idx1_idx, 0);
+        SV *h2_sv;
+        AV *keys_av;
+
+        if (!got)
+            croak("panic: no idx1_av element for idx %ld",idx1_idx);
+        idx1= SvUV(*got);
+
+        got= av_fetch(h2_packed_av, idx1, 0);
+        if (!got)
+            croak("panic: no h2_buckets for idx %u",idx1);
+        h2_sv= *got;
+
+        got= av_fetch(keybuckets_av, idx1, 0);
+        if (!got)
+            croak("panic: no keybuckets_av for idx %u",idx1);
+        keys_av= (AV *)SvRV(*got);
+
+        {
+            U32 xor_val= 0;
+            STRLEN h2_strlen;
+            U32 *h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
+            STRLEN h2_count= h2_strlen / sizeof(U32);
+            U32 *h2_end= h2_start + h2_count;
+
+            if (h2_count == 1 && variant) {
+                while (*singleton_pos < bucket_count && is_used[*singleton_pos]) {
+                    *singleton_pos++;
+                }
+                if (*singleton_pos == bucket_count) {
+                    xor_val= 0;
+                } else {
+                    *idx_start=* singleton_pos;
+                    xor_val= (U32)(-*singleton_pos-1);
+                }
+            } else {
+                next_xor_val:
+                while (1) {
+                    U32 *h2_ptr= h2_start;
+                    U32 *idx_ptr= idx_start;
+                    if (xor_val == max_xor_val) {
+                        xor_val= 0;
+                        break;
+                    } else {
+                        xor_val++;
+                    }
+                    while (h2_ptr < h2_end) {
+                        U32 i= (*h2_ptr ^ xor_val) % bucket_count;
+                        U32 *check_idx;
+                        if (is_used[i])
+                            goto next_xor_val;
+                        for (check_idx= idx_start; check_idx < idx_ptr; check_idx++) {
+                            if (*check_idx == i)
+                                goto next_xor_val;
+                        }
+                        *idx_ptr= i;
+                        h2_ptr++;
+                        idx_ptr++;
+                    }
+                    break;
+                }
+            }
+            if (xor_val) {
+                set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, h2_count, idx_start, is_used, keys_av);
+            } else {
+                return idx1 + 1;
+            }
+        }
+    }
+    return 0;
+}
 
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
 
@@ -496,7 +632,7 @@ STMT_START {                                                                \
 } STMT_END
 
 
-MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel		
+MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel
 
 BOOT:
 {
@@ -571,7 +707,7 @@ seed_state(base_seed_sv)
                 warn("seed passed into seed_state() is readonly and too long, using only the first %d bytes",
                     (int)STADTX_SEED_BYTES);
             }
-            seed_sv= sv_2mortal(newSVsv(base_seed_sv)); 
+            seed_sv= sv_2mortal(newSVsv(base_seed_sv));
         }
         if (seed_len < STADTX_SEED_BYTES) {
             sv_grow(seed_sv,STADTX_SEED_BYTES+1);
@@ -660,14 +796,14 @@ compute_xs(self_hv)
     } else {
         croak("no state?");
     }
-    
+
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_BUF_LENGTH,1);
     if (he) {
         buf_length_sv= HeVAL(he);
     } else {
         croak("no buf_length?");
     }
-    
+
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_SOURCE_HASH,0);
     if (he) {
         source_hv= (HV*)SvRV(HeVAL(he));
