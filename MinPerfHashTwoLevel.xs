@@ -457,11 +457,12 @@ idx_by_length(pTHX_ AV *keybuckets_av) {
     return by_length_av;
 }
 
-void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 h2_count, U32 *idx_start, char *is_used, AV *keys_av) {
+void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *idx_start, char *is_used, AV *keys_in_bucket_av) {
     dMY_CXT;
     U32 *idx2;
     HV *idx1_hv;
     U32 i;
+    U32 keys_in_bucket_count= av_top_index(keys_in_bucket_av) + 1;
 
     SV **buckets_rvp= av_fetch(buckets_av, idx1, 1);
     if (!buckets_rvp) croak("out of memory in buckets_av lvalue fetch");
@@ -476,17 +477,17 @@ void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 h2_
     }
 
     hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_XOR_VAL,xor_val);
-    hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_H1_KEYS,h2_count);
+    hv_setuv_with_keysv(idx1_hv,MPH_KEYSV_H1_KEYS,keys_in_bucket_count);
 
     /* update used */
-    for (i= 0, idx2= idx_start; i < h2_count; i++,idx2++) {
+    for (i= 0, idx2= idx_start; i < keys_in_bucket_count; i++,idx2++) {
         HV *idx2_hv;
         HV *keys_hv;
 
         SV **keys_rvp;
         SV **buckets_rvp;
 
-        keys_rvp= av_fetch(keys_av, i, 0);
+        keys_rvp= av_fetch(keys_in_bucket_av, i, 0);
         if (!keys_rvp) croak("no key_info in bucket %d", i);
         keys_hv= (HV *)SvRV(*keys_rvp);
 
@@ -523,7 +524,7 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
         U32 idx1;
         SV **got= av_fetch(idx1_av, idx1_idx, 0);
         SV *h2_sv;
-        AV *keys_av;
+        AV *keys_in_bucket_av;
 
         if (!got)
             croak("panic: no idx1_av element for idx %ld",idx1_idx);
@@ -537,16 +538,16 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
         got= av_fetch(keybuckets_av, idx1, 0);
         if (!got)
             croak("panic: no keybuckets_av for idx %u",idx1);
-        keys_av= (AV *)SvRV(*got);
+        keys_in_bucket_av= (AV *)SvRV(*got);
 
         {
             U32 xor_val= 0;
             STRLEN h2_strlen;
             U32 *h2_start= (U32 *)SvPV(h2_sv,h2_strlen);
-            STRLEN h2_count= h2_strlen / sizeof(U32);
-            U32 *h2_end= h2_start + h2_count;
+            STRLEN keys_in_bucket_count= h2_strlen / sizeof(U32);
+            U32 *h2_end= h2_start + keys_in_bucket_count;
 
-            if (h2_count == 1 && variant) {
+            if (keys_in_bucket_count == 1 && variant) {
                 while (*singleton_pos < bucket_count && is_used[*singleton_pos]) {
                     (*singleton_pos)++;
                 }
@@ -583,11 +584,49 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
                 }
             }
             if (xor_val) {
-                set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, h2_count, idx_start, is_used, keys_av);
+                set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
             } else {
                 return idx1 + 1;
             }
         }
+    }
+    return 0;
+}
+
+U32
+place_singletons(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx_start, AV *buckets_av) {
+    IV idx1_idx;
+    IV top_idx1= av_top_index(idx1_av);
+    U32 singleton_pos= 0;
+    if (top_idx1 < 0) croak("empty index array?");
+
+    for (idx1_idx=0; idx1_idx <= top_idx1; idx1_idx++) {
+        U32 idx1;
+        SV **got= av_fetch(idx1_av, idx1_idx, 0);
+        SV *h2_sv;
+        AV *keys_av;
+        U32 xor_val= 0;
+
+        if (!got)
+            croak("panic: no idx1_av element for idx %ld",idx1_idx);
+        idx1= SvUV(*got);
+
+
+        while (singleton_pos < bucket_count && is_used[singleton_pos]) {
+            (singleton_pos)++;
+        }
+        if (singleton_pos == bucket_count) {
+            return idx1 + 1;
+        } else {
+            *idx_start= singleton_pos;
+            xor_val= (U32)(-singleton_pos-1);
+            got= av_fetch(keybuckets_av, idx1, 0);
+            if (!got)
+                croak("panic: no keybuckets_av for idx %u",idx1);
+            keys_av= (AV *)SvRV(*got);
+            set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_av);
+        }
+
     }
     return 0;
 }
