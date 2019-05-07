@@ -593,10 +593,22 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
 }
 
 U32
-solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_length_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx_start,AV *buckets_av) {
+solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_length_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, AV *buckets_av) {
     U32 bad_idx= 0;
     I32 singleton_pos= 0;
     IV len_idx;
+    char *is_used;
+    U32 *idx_start;
+
+    /* this is used to quickly tell if we have used a particular bucket yet */
+    Newxz(is_used,bucket_count,char);
+    SAVEFREEPV(is_used);
+
+    /* used to keep track the indexes that a set of keys map into
+     * stored in an SV just because - we actually treat it as an array of U32 */
+    Newxz(idx_start, av_top_index(by_length_av)+1, U32);
+    SAVEFREEPV(idx_start);
+
     /* now loop through and process the keysets from most collisions to least */
     for (len_idx= av_top_index(by_length_av); len_idx > 0 && !bad_idx; len_idx--) {
         AV *idx1_av;
@@ -764,10 +776,6 @@ compute_xs(self_hv)
     STRLEN state_len;
     HE *he;
 
-
-    char *is_used;
-    U32 *idx_start;
-
     IV len_idx;
 
     U32 bucket_count;
@@ -874,17 +882,9 @@ compute_xs(self_hv)
      */
     by_length_av= idx_by_length(aTHX_ keybuckets_av);
 
-    /* this is used to quickly tell if we have used a particular bucket yet */
-    Newxz(is_used,bucket_count,char);
-    SAVEFREEPV(is_used);
-
-    /* used to keep track the indexes that a set of keys map into
-     * stored in an SV just because - we actually treat it as an array of U32 */
-    Newxz(idx_start, av_top_index(by_length_av)+1, U32);
-    SAVEFREEPV(idx_start);
         
     RETVAL= solve_collisions_by_length(aTHX_ bucket_count, max_xor_val, by_length_av, h2_packed_av, keybuckets_av, 
-        variant, is_used, idx_start, buckets_av);
+        variant, buckets_av);
 }
     OUTPUT:
         RETVAL
