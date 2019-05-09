@@ -444,15 +444,11 @@ idx_by_length(pTHX_ AV *keybuckets_av) {
         if (len<1) continue;
 
         got= av_fetch(by_length_av,len,1);
-        if (SvROK(*got)) {
-            target_av= (AV*)SvRV(*got);
+        if (SvPOK(*got)) {
+            sv_catpvn(*got,(char *)&i,4);
         } else {
-            target_av= newAV();
-            sv_upgrade(*got,SVt_RV);
-            SvRV_set(*got, (SV*)target_av);
-            SvROK_on(*got);
+            sv_setpvn(*got,(char *)&i,4);
         }
-        av_push(target_av, newSVuv(i));
     }
     return by_length_av;
 }
@@ -515,13 +511,14 @@ void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *id
 }
 
 U32
-solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx_start,AV *buckets_av) {
-    IV idx1_idx;
-    IV top_idx1= av_top_index(idx1_av);
-    if (top_idx1 < 0) croak("empty index array?");
+solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, SV *idx1_packed_sv, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx2_start,AV *buckets_av) {
+    STRLEN idx1_packed_sv_len;
+    U32 *idx1_start= (U32 *)SvPV(idx1_packed_sv,idx1_packed_sv_len);
+    U32 *idx1_ptr;
+    U32 *idx1_end= idx1_start + (idx1_packed_sv_len / sizeof(U32));
 
-    for (idx1_idx=0; idx1_idx <= top_idx1; idx1_idx++) {
-        U32 idx1;
+    for (idx1_ptr= idx1_start; idx1_ptr < idx1_end; idx1_ptr++) {
+        U32 idx1= *idx1_ptr;
         SV *h2_sv;
         AV *keys_in_bucket_av;
         U32 xor_val= 0;
@@ -530,11 +527,6 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
         STRLEN keys_in_bucket_count;
         U32 *h2_end;
         SV **got;
-
-        got= av_fetch(idx1_av, idx1_idx, 0);
-        if (!got)
-            croak("panic: no idx1_av element for idx %ld",idx1_idx);
-        idx1= SvUV(*got);
 
         got= av_fetch(h2_packed_av, idx1, 0);
         if (!got)
@@ -553,7 +545,7 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
         next_xor_val:
         while (1) {
             U32 *h2_ptr= h2_start;
-            U32 *idx_ptr= idx_start;
+            U32 *idx2_ptr= idx2_start;
             if (xor_val == max_xor_val) {
                 return idx1 + 1;
             } else {
@@ -564,37 +556,35 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, AV *idx1_av, AV *h2_pa
                 U32 *check_idx;
                 if (is_used[i])
                     goto next_xor_val;
-                for (check_idx= idx_start; check_idx < idx_ptr; check_idx++) {
+                for (check_idx= idx2_start; check_idx < idx2_ptr; check_idx++) {
                     if (*check_idx == i)
                         goto next_xor_val;
                 }
-                *idx_ptr= i;
+                *idx2_ptr= i;
                 h2_ptr++;
-                idx_ptr++;
+                idx2_ptr++;
             }
             break;
         }
-        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
+        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx2_start, is_used, keys_in_bucket_av);
     }
     return 0;
 }
 
 U32
-place_singletons(pTHX_ U32 bucket_count, AV *idx1_av, AV *keybuckets_av, char *is_used, U32 *idx_start, AV *buckets_av) {
-    IV idx1_idx;
-    IV top_idx1= av_top_index(idx1_av);
-    U32 singleton_pos= 0;
-    if (top_idx1 < 0) croak("empty index array?");
+place_singletons(pTHX_ U32 bucket_count, SV *idx1_packed_sv, AV *keybuckets_av, char *is_used, U32 *idx2_start, AV *buckets_av) {
+    STRLEN idx1_packed_sv_len;
+    U32 *idx1_start= (U32 *)SvPV(idx1_packed_sv,idx1_packed_sv_len);
+    U32 *idx1_ptr;
+    U32 *idx1_end= idx1_start + (idx1_packed_sv_len / sizeof(U32));
 
-    for (idx1_idx= 0; idx1_idx <= top_idx1; idx1_idx++) {
-        U32 idx1;
-        SV **got= av_fetch(idx1_av, idx1_idx, 0);
+    U32 singleton_pos= 0;
+
+    for (idx1_ptr= idx1_start; idx1_ptr < idx1_end; idx1_ptr++) {
+        U32 idx1= *idx1_ptr;
         AV *keys_in_bucket_av;
         U32 xor_val;
-
-        if (!got)
-            croak("panic: no idx1_av element for idx %ld",idx1_idx);
-        idx1= SvUV(*got);
+        SV **got;
 
         while (singleton_pos < bucket_count && is_used[singleton_pos]) {
             singleton_pos++;
@@ -607,8 +597,8 @@ place_singletons(pTHX_ U32 bucket_count, AV *idx1_av, AV *keybuckets_av, char *i
         if (!got)
             croak("panic: no keybuckets_av for idx %u",idx1);
         keys_in_bucket_av= (AV *)SvRV(*got);
-        *idx_start= singleton_pos;
-        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx_start, is_used, keys_in_bucket_av);
+        *idx2_start= singleton_pos;
+        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx2_start, is_used, keys_in_bucket_av);
     }
     return 0;
 }
@@ -619,7 +609,7 @@ solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_lengt
     I32 singleton_pos= 0;
     IV len_idx;
     char *is_used;
-    U32 *idx_start;
+    U32 *idx2_start;
 
     /* this is used to quickly tell if we have used a particular bucket yet */
     Newxz(is_used,bucket_count,char);
@@ -627,26 +617,24 @@ solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_lengt
 
     /* used to keep track the indexes that a set of keys map into
      * stored in an SV just because - we actually treat it as an array of U32 */
-    Newxz(idx_start, av_top_index(by_length_av)+1, U32);
-    SAVEFREEPV(idx_start);
+    Newxz(idx2_start, av_top_index(by_length_av)+1, U32);
+    SAVEFREEPV(idx2_start);
 
     /* now loop through and process the keysets from most collisions to least */
     for (len_idx= av_top_index(by_length_av); len_idx > 0 && !bad_idx; len_idx--) {
-        AV *idx1_av;
-        SV **got_idx_ary= av_fetch(by_length_av, len_idx, 0);
+        SV **idx1_packed_sv= av_fetch(by_length_av, len_idx, 0);
         /* deal with the possibility that there are gaps in the length grouping,
          * for instance we might have some 13 way collisions and some 11 way collisions
          * without any 12-way collisions. (this should be rare - but is possible) */
-        if (!got_idx_ary || !SvROK(*got_idx_ary))
+        if (!idx1_packed_sv || !SvPOK(*idx1_packed_sv))
             continue;
-        idx1_av= (AV*)SvRV(*got_idx_ary);
 
         if (len_idx == 1 && variant) {
-            bad_idx= place_singletons(aTHX_ bucket_count, idx1_av, keybuckets_av,
-                is_used, idx_start, buckets_av);
+            bad_idx= place_singletons(aTHX_ bucket_count, *idx1_packed_sv, keybuckets_av,
+                is_used, idx2_start, buckets_av);
         } else {
-            bad_idx= solve_collisions(aTHX_ bucket_count, max_xor_val, idx1_av, h2_packed_av, keybuckets_av,
-                variant, is_used, idx_start, buckets_av);
+            bad_idx= solve_collisions(aTHX_ bucket_count, max_xor_val, *idx1_packed_sv, h2_packed_av, keybuckets_av,
+                variant, is_used, idx2_start, buckets_av);
         }
     }
     return bad_idx;
