@@ -136,7 +136,9 @@ sub make_file {
     my $buckets= $hasher->compute($source_hash);
     my $buf_length= $hasher->{buf_length};
     my $state= $hasher->{state};
-    my $buf= packed($variant,$buf_length,$state,$comment,@$buckets);
+    my $flags= 0;
+    $flags += (1<<2) if delete $opts{no_dedupe};
+    my $buf= packed($variant,$buf_length,$state,$comment,$flags,@$buckets);
 
     my $tmp_file= "$ofile.$$";
     open my $ofh, ">", $tmp_file

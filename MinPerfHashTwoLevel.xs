@@ -47,11 +47,10 @@
 
 #define COUNT_MPH_KEYSV 16
 
-#define MPH_F_FILTER_UNDEF          1
-#define MPH_F_DETERMINISTIC         2
+#define MPH_F_FILTER_UNDEF          (1<<0)
+#define MPH_F_DETERMINISTIC         (1<<1)
+#define MPH_F_NO_DEDUPE             (1<<2)
 
-#define MPH_F_FILTER_UNDEF 1
-#define MPH_F_DETERMINISTIC 2
 
 typedef struct {
     SV *sv;
@@ -647,13 +646,18 @@ STMT_START {                                                                \
         if (he) {                                                           \
             SV *sv= HeVAL(he);                                              \
             if (SvOK(sv)) {                                                 \
-                HE *ofs= hv_fetch_ent(str_ofs_hv,sv,1,0);                   \
-                SV *ofs_sv= ofs ? HeVAL(ofs) : NULL;                        \
                 STRLEN pv_len;                                              \
                 char *pv;                                                   \
-                if (!ofs_sv)                                                \
-                    croak("oom getting ofs for " #he "for %u",i);           \
-                if (SvOK(ofs_sv)){                                          \
+                SV *ofs_sv;                                                 \
+                if (flags & MPH_F_NO_DEDUPE) {                              \
+                    ofs_sv= NULL;                                           \
+                } else {                                                    \
+                    HE *ofs= hv_fetch_ent(str_ofs_hv,sv,1,0);               \
+                    ofs_sv= ofs ? HeVAL(ofs) : NULL;                        \
+                    if (!ofs_sv)                                            \
+                        croak("oom getting ofs for " #he "for %u",i);       \
+                }                                                           \
+                if (ofs_sv && SvOK(ofs_sv)){                                \
                     table[i].key_ofs= SvUV(ofs_sv);                         \
                     table[i].key_len= sv_len(sv);                           \
                 } else {                                                    \
@@ -668,7 +672,8 @@ STMT_START {                                                                \
                     } else {                                                \
                         table[i].key_ofs= 1;                                \
                     }                                                       \
-                    sv_setuv(ofs_sv,table[i].key_ofs);                      \
+                    if (ofs_sv)                                             \
+                        sv_setuv(ofs_sv,table[i].key_ofs);                  \
                 }                                                           \
             } else {                                                        \
                 table[i].key_ofs= 0;                                        \
@@ -910,15 +915,16 @@ compute_xs(self_hv)
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::OnDisk
 
 SV *
-packed(version_sv,buf_length_sv,state_sv,comment_sv,buckets_av)
+packed(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         SV* version_sv
         SV* buf_length_sv
         SV* state_sv
         SV* comment_sv
         AV *buckets_av
+        U32 flags
     PREINIT:
         dMY_CXT;
-    PROTOTYPE: $$$$\@
+    PROTOTYPE: $$$$$\@
     CODE:
 {
     U32 buf_length= SvUV(buf_length_sv);
@@ -1016,14 +1022,17 @@ packed(version_sv,buf_length_sv,state_sv,comment_sv,buckets_av)
         }
     }
     {
-        U32 size= str_buf_pos - start;
-        U32 remainder= size % 16;
-        if (remainder) {
-            str_buf_pos += remainder;
-            size += remainder;
+        U32 actual_size= str_buf_pos - start;
+        U32 r= actual_size % 16;
+        if (r) {
+            U32 add = 16 - r;
+            str_buf_pos += add;
+            actual_size += add;
         }
-        SvCUR_set(sv_buf, size);
+        SvCUR_set(sv_buf, actual_size);
         SvPOK_on(sv_buf);
+        if (0)
+            warn ("original estimate: %d actual: %d saved:%i\n", total_size, actual_size, (int)(total_size - actual_size));
     }
     head->table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
     head->str_buf_checksum= stadtx_hash_with_state(state_pv, str_buf_start, str_buf_pos - str_buf_start);
