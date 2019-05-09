@@ -24,7 +24,7 @@ my @source_hashes= (
         fiz => "shmang",
         plop => "shwoosh",
     },
-    { 1..100000 },
+    { map { $_ => $_ } 1..50000 },
     {
         $not_utf8 => $not_utf8,
         $utf8_can_be_downgraded => $utf8_can_be_downgraded,
