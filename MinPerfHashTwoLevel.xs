@@ -63,6 +63,9 @@
 #define MPH_MOUNT_ERROR_CORRUPT_TABLE   (-9)
 #define MPH_MOUNT_ERROR_CORRUPT_STR_BUF (-10)
 
+#define MAGIC_DECIMAL 1278363728 /* PH2L */
+#define MAGIC_BIG_ENDIAN_DECIMAL 1346908748
+
 typedef struct {
     SV *sv;
     U32 hash;
@@ -292,7 +295,11 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
     obj->bytes= st.st_size;
     obj->header= head= (struct mph_header*)ptr;
     obj->fd= fd;
-    if (head->magic_num != 1278363728) {
+    if (head->magic_num != MAGIC_DECIMAL) {
+        if (head->magic_num == MAGIC_BIG_ENDIAN_DECIMAL) {
+            if (error)
+                sv_setpvf(error,"this is a big-endian machine, cant handle PH2L files here");
+        }
         if (error)
             sv_setpvf(error,"file '%s' is not a PH2L file", file);
         return MPH_MOUNT_ERROR_BAD_MAGIC;
