@@ -3,6 +3,8 @@
 #include "perl.h"
 #include "XSUB.h"
 
+#define NEED_newRV_noinc
+#define NEED_sv_2pv_flags
 #include "ppport.h"
 #include "stadtx_hash.h"
 #include <sys/mman.h>
@@ -65,6 +67,10 @@
 
 #define MAGIC_DECIMAL 1278363728 /* PH2L */
 #define MAGIC_BIG_ENDIAN_DECIMAL 1346908748
+
+#ifndef av_top_index
+#define av_top_index(x) av_len(x)
+#endif
 
 typedef struct {
     SV *sv;
