@@ -2,8 +2,7 @@ package Algorithm::MinPerfHashTwoLevel;
 use strict;
 use warnings;
 our $VERSION = '0.09';
-our $DEFAULT_VARIANT = 1;
-
+our $DEFAULT_VARIANT = 2;
 
 use Exporter qw(import);
 
@@ -25,10 +24,13 @@ BEGIN {
 use constant \%constant;
 
 our %EXPORT_TAGS = (
-    'all' => [ qw(
-        seed_state
-        hash_with_state
-    ), sort keys %constant ],
+    'all' => [
+        '$DEFAULT_VARIANT',
+        qw(
+            seed_state
+            hash_with_state
+        ), sort keys %constant
+    ],
     'utf8_flags' => [ grep /UTF8/, sort keys %constant],
     'uint_max'   => [ grep /_MAX/, sort keys %constant]
 );
@@ -55,8 +57,8 @@ sub new {
     $o->{compute_flags}=0;
     $o->{compute_flags} += 1 if delete $o->{filter_undef};
     $o->{compute_flags} += 2 if delete $o->{deterministic};
-    die "Unknown variant '$o->{variant}' in constructor new()"
-        if ($o->{variant} > 1);
+    die "Unknown variant '$o->{variant}' in constructor new(), max known is 2"
+        if ($o->{variant} > 2);
     return $o;
 }
 

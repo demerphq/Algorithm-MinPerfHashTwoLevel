@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 197;
+use Test::More tests => 295;
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 my $class;
@@ -38,7 +38,7 @@ my @source_hashes= (
 
 );
 
-foreach my $variant (0..1) {
+foreach my $variant (0..2) {
     foreach my $idx (0..$#source_hashes) {
         foreach my $seed ("1234567812345678",undef) {
             my $seed_str= defined $seed ? $seed : "undef";

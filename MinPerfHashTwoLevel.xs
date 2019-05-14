@@ -101,12 +101,14 @@ STMT_START {                                                            \
     if (got_he) sv_setuv(HeVAL(got_he),uv);                             \
 } STMT_END
 
-#define HASH2INDEX(x,h2,xor_val,bucket_count) STMT_START {      \
-        x= h2 ^ xor_val;                                        \
-        /*x = ((x >> 16) ^ x) * 0x45d9f3b;                        \
-        x = ((x >> 16) ^ x) * 0x45d9f3b;                        \
-        x = (x >> 16) ^ x;*/                                      \
-        x %= bucket_count;                                      \
+#define HASH2INDEX(x,h2,xor_val,bucket_count,variant) STMT_START {      \
+        x= h2 ^ xor_val;                                                \
+        if (variant > 1) {                                              \
+            x = ((x >> 16) ^ x) * 0x45d9f3b;                            \
+            x = ((x >> 16) ^ x) * 0x45d9f3b;                            \
+            x = ((x >> 16) ^ x);                                        \
+        }                                                               \
+        x %= bucket_count;                                              \
 } STMT_END
 
 struct mph_header {
@@ -239,10 +241,10 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
         U32 h2= h0 & 0xFFFFFFFF;
         U8 *got_key_pv;
         STRLEN got_key_len;
-        if ( mph->variant == 0 || bucket->index > 0 ) {
-            HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets);
-        } else { /* mph->variant == 1 */
+        if ( mph->variant > 0 && bucket->index < 0 ) {
             index = -bucket->index-1;
+        } else {
+            HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets,mph->variant);
         }
         bucket= buckets + index;
         got_key_pv= strs + bucket->key_ofs;
@@ -304,7 +306,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
             sv_setpvf(error,"file '%s' is not a PH2L file", file);
         return MPH_MOUNT_ERROR_BAD_MAGIC;
     }
-    if (head->variant>1) {
+    if (head->variant > 2) {
         if (error)
             sv_setpvf(error,"unknown version '%d' in '%s'", head->variant, file);
         return MPH_MOUNT_ERROR_BAD_VERSION;
@@ -395,7 +397,7 @@ U32 compute_max_xor_val(const U32 n, const U32 variant) {
         n_copy = n_copy >> 1;
     }
 
-    if ( n_bits > 1 ) {
+    if ( variant > 1 || n_bits > 1 ) {
         return variant ? INT32_MAX : UINT32_MAX;
     } else {
         return n;
@@ -645,7 +647,7 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, SV *idx1_packed_sv, AV
             while (h2_ptr < h2_end) {
                 U32 idx2;
                 U32 *check_idx;
-                HASH2INDEX(idx2,*h2_ptr,xor_val,bucket_count);
+                HASH2INDEX(idx2,*h2_ptr,xor_val,bucket_count,variant);
                 if (is_used[idx2])
                     goto next_xor_val;
                 for (check_idx= idx2_start; check_idx < idx2_ptr; check_idx++) {

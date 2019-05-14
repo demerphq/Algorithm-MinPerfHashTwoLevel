@@ -2,10 +2,9 @@ package Tie::Hash::MinPerfHashTwoLevel::OnDisk;
 use strict;
 use warnings;
 our $VERSION = '0.09';
-our $DEFAULT_VARIANT = 1;
 
 # this also installs the XS routines we use into our namespace.
-use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', ':utf8_flags', ':uint_max' );
+use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', ':utf8_flags', ':uint_max', '$DEFAULT_VARIANT' );
 use Exporter qw(import);
 use constant MAGIC_STR => "PH2L";
 use Carp;
@@ -126,7 +125,7 @@ sub make_file {
     my $comment= $opts{comment};
     my $debug= $opts{debug} || 0;
     my $variant= int($opts{variant});
-    die "Unknown file variant $variant" if $variant > 1 or $variant < 0;
+    die "Unknown file variant $variant" if $variant > 2 or $variant < 0;
 
     die "comment cannot contain null"
         if index($comment,"\0") >= 0;
@@ -194,7 +193,7 @@ sub _validate_file {
          $table_ofs, $key_flags_ofs, $val_flags_ofs,    $str_buf_ofs,
          $table_checksum, $str_buf_checksum )= unpack "V8Q2", $head;
 
-    if ( $variant > 1 ) {
+    if ( $variant > 2 ) {
         return(undef,"file '$file' is an unknown '" . MAGIC_STR . "' variant $variant");
     }
     
