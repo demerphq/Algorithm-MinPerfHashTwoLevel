@@ -1,2 +1,2 @@
 $ENV{VARIANT}= 0;
-do "t/OnDisk.pl";
+do "./t/OnDisk.pl";

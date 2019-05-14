@@ -3,13 +3,13 @@
 use strict;
 use warnings;
 
-use Test::More tests => 295;
+use Test::More tests => 2 + 98 * (defined($ENV{VARIANT}) ? 1 : 3);
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 my $class;
 BEGIN { use_ok($class= 'Tie::Hash::MinPerfHashTwoLevel::OnDisk') };
-my $srand=$ENV{SRAND} ? srand(0+$ENV{SRAND}) : srand();
-diag "srand=$srand";
+my $srand= $ENV{SRAND} ? srand(0+$ENV{SRAND}) : srand();
+ok(defined($srand),"srand as expected: $srand");
 my $tmpdir= File::Temp->newdir();
 
 my $not_utf8= "not utf8: \x{DF}";
@@ -38,18 +38,17 @@ my @source_hashes= (
 
 );
 
-foreach my $variant (0 .. 2) {
-    next if defined $ENV{VARIANT} and $ENV{VARIANT} != $variant;
+foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
     foreach my $idx (0..$#source_hashes) {
         foreach my $seed ("1234567812345678",undef) {
             my $seed_str= defined $seed ? $seed : "undef";
             my $source_hash= $source_hashes[$idx];
-            my $title= "$seed_str.$idx.$variant";
-            my $test_file= "$tmpdir/test.$title.hash";
+            my $title= "seed:$seed_str hash:$idx variant:$variant";
+            my $test_file= "$tmpdir/test.$seed_str.$idx.$variant.hash";
             my $got_file= $class->make_file(
                 file        => $test_file,
                 source_hash => $source_hash,
-                comment     => "this is a comment",
+                comment     => "this is a comment: $title",
                 debug       => $ENV{TEST_VERBOSE},
                 seed        => $seed,
                 variant     => $variant,

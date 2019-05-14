@@ -474,7 +474,7 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
 }
 
 void
-find_first_level_collisions(U32 bucket_count, AV *keys_av, AV *keybuckets_av, AV *h2_packed_av) {
+find_first_level_collisions(pTHX_ U32 bucket_count, AV *keys_av, AV *keybuckets_av, AV *h2_packed_av) {
     dMY_CXT;
     U32 i;
     for (i=0; i<bucket_count;i++) {
