@@ -104,6 +104,8 @@ STMT_START {                                                            \
 #define HASH2INDEX(x,h2,xor_val,bucket_count,variant) STMT_START {      \
         x= h2 ^ xor_val;                                                \
         if (variant > 1) {                                              \
+        /* see: https://stackoverflow.com/a/12996028                    \
+         * but we could use any similar integer hash function. */       \
             x = ((x >> 16) ^ x) * 0x45d9f3b;                            \
             x = ((x >> 16) ^ x) * 0x45d9f3b;                            \
             x = ((x >> 16) ^ x);                                        \
@@ -222,7 +224,10 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     U8 *key_pv;
     U64 h0;
     U32 h1;
+    U32 h2;
     U32 index;
+    U8 *got_key_pv;
+    STRLEN got_key_len;
 
     if (SvUTF8(key_sv)) {
         SV *tmp= sv_2mortal(newSVsv(key_sv));
@@ -235,27 +240,24 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     index= h1 % mph->num_buckets;
 
     bucket= buckets + index;
-    if (!bucket->xor_val) {
+    if (!bucket->xor_val)
         return 0;
+    
+    h2= h0 & 0xFFFFFFFF;
+    if ( mph->variant > 0 && bucket->index < 0 ) {
+        index = -bucket->index-1;
     } else {
-        U32 h2= h0 & 0xFFFFFFFF;
-        U8 *got_key_pv;
-        STRLEN got_key_len;
-        if ( mph->variant > 0 && bucket->index < 0 ) {
-            index = -bucket->index-1;
-        } else {
-            HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets,mph->variant);
-        }
-        bucket= buckets + index;
-        got_key_pv= strs + bucket->key_ofs;
-        if (bucket->key_len == key_len && memEQ(key_pv,got_key_pv,key_len)) {
-            if (val_sv) {
-                sv_set_from_bucket(val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
-            }
-            return 1;
-        }
-        return 0;
+        HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets,mph->variant);
     }
+    bucket= buckets + index;
+    got_key_pv= strs + bucket->key_ofs;
+    if (bucket->key_len == key_len && memEQ(key_pv,got_key_pv,key_len)) {
+        if (val_sv) {
+            sv_set_from_bucket(val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
+        }
+        return 1;
+    }
+    return 0;
 }
 
 IV
