@@ -111,7 +111,7 @@ sub _compute_first_level_inner {
 
     my $bad_idx= compute_xs($self);
     if ($bad_idx) {
-        printf " Index '%d' not solved, new seed required.\n", $bad_idx-1;
+        printf " Index '%d' not solved, new seed required.\n", $bad_idx-1 if $debug;
         return undef;
     }
 
@@ -162,19 +162,32 @@ Computing the hash and mask is done in C (via XS).
 The process for looking up a value in a two level hash with n buckets is
 as follows:
 
-    0. compute the h0 for the key. (h1 = h0 >> 32; h2 = h0 & 0xFFFFFFFF;)
-    1. compute idx = h1 % n;
-    2. find the xor_val for bucket[idx]
+    0. compute the h0 for the key. (giving: h1 = h0 >> 32; h2 = h0 & 0xFFFFFFFF;)
+    1. compute idx1 = h1 % n;
+    2. find the xor_val for bucket[idx1]
     3. if the xor_val is zero we are done, the key is not in the hash
-    4. compute idx 
-        if variant == 0 or (int)xor_val > 0
-         idx = (h2 ^ xor_val) % n;
+    4. compute idx2:
+        if variant > 0 and int(xor_val) < 0
+            idx2 = -xor_val-1
         else
-         idx = -xor_val-1
-    5. compare the key data associated with bucket[idx] with the key provided
-    6. if they match return the desired value.
+            idx2 = INTHASH(h2 ^ xor_val) % n;
+    5. compare the key data associated with bucket[idx2] with the key provided
+    6. if they match return the desired value, otherwise the key is not in the hash.
 
-This module performs the task of computing the xor_val for each bucket.
+In essence this module performs the task of computing the xor_val for
+each bucket such that the idx2 for every element is unique, it does it in C/XS so
+that it is fast.
+
+The INTHASH() function used depends by variant, with variant 2 it is:
+
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x);
+
+which is just a simple 32 bit integer hash function I found at
+https://stackoverflow.com/a/12996028, but any decent reversible
+integer hash function would do. For variant 0 and 1 it is the identity
+function. The default is variant 2.
 
 *NOTE* in Perl a given string may have differing binary representations
 if it is encoded as utf8 or not. This module uses the same conventions
@@ -195,7 +208,8 @@ tracking the representation as a flag. See key_normalized and key_is_utf8
 Construct a new Algorithm::MinPerfHashTwoLevel object. Optional arguments
 which may be provided are 'source_hash' which is a hash reference to use
 as the source for the minimal perfect hash, 'seed' which is expected to be
-a 16 byte string, and 'debug' which is expected to be 0 or 1.
+a 16 byte string, and 'debug' which is expected to be 0 or 1, as well
+as variant, which may be 0, 1 or 2. The default is 2.
 
 =item compute
 
