@@ -50,7 +50,18 @@
 #define MPH_F_FILTER_UNDEF          (1<<0)
 #define MPH_F_DETERMINISTIC         (1<<1)
 #define MPH_F_NO_DEDUPE             (1<<2)
+#define MPH_F_VALIDATE              (1<<3)
 
+#define MPH_MOUNT_ERROR_OPEN_FAILED     (-1)
+#define MPH_MOUNT_ERROR_FSTAT_FAILED    (-2)
+#define MPH_MOUNT_ERROR_TOO_SMALL       (-3)
+#define MPH_MOUNT_ERROR_BAD_SIZE        (-4)
+#define MPH_MOUNT_ERROR_MAP_FAILED      (-5)
+#define MPH_MOUNT_ERROR_BAD_MAGIC       (-6)
+#define MPH_MOUNT_ERROR_BAD_VERSION     (-7)
+#define MPH_MOUNT_ERROR_CORRUPT_OFFSETS (-8)
+#define MPH_MOUNT_ERROR_CORRUPT_TABLE   (-9)
+#define MPH_MOUNT_ERROR_CORRUPT_STR_BUF (-10)
 
 typedef struct {
     SV *sv;
@@ -85,6 +96,14 @@ typedef struct {
 STMT_START {                                                            \
     HE *got_he= hv_fetch_ent_with_keysv(hv,keysv_idx,1);                \
     if (got_he) sv_setuv(HeVAL(got_he),uv);                             \
+} STMT_END
+
+#define HASH2INDEX(x,h2,xor_val,bucket_count) STMT_START {      \
+        x= h2 ^ xor_val;                                        \
+        /*x = ((x >> 16) ^ x) * 0x45d9f3b;                        \
+        x = ((x >> 16) ^ x) * 0x45d9f3b;                        \
+        x = (x >> 16) ^ x;*/                                      \
+        x %= bucket_count;                                      \
 } STMT_END
 
 struct mph_header {
@@ -152,6 +171,8 @@ STMT_START {                                            \
         ptr= 0;                                         \
         is_utf8= 0;                                     \
     }                                                   \
+    /* note that sv_setpvn() will cause the sv to       \
+     * become undef if ptr is 0 */                      \
     sv_setpvn_mg((sv),ptr,len);                         \
     if (is_utf8 > 1) {                                  \
         sv_utf8_upgrade(sv);                            \
@@ -216,7 +237,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
         U8 *got_key_pv;
         STRLEN got_key_len;
         if ( mph->variant == 0 || bucket->index > 0 ) {
-            index = (h2 ^ bucket->xor_val) % mph->num_buckets;
+            HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets);
         } else { /* mph->variant == 1 */
             index = -bucket->index-1;
         }
@@ -232,21 +253,85 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     }
 }
 
-void
-mph_mmap(pTHX_ char *file, struct mph_obj *obj) {
+IV
+mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
     struct stat st;
+    struct mph_header *head;
     int fd = open(file, O_RDONLY, 0);
     void *ptr;
-    if (fd < 0)
-        croak("failed to open '%s' for read", file);
-    fstat(fd,&st);
+
+    if (error)
+        sv_setpvs(error,"");
+    if (fd < 0) {
+        if (error)
+            sv_setpvf(error,"file '%s' could not be opened for read", file);
+        return MPH_MOUNT_ERROR_OPEN_FAILED;
+    }
+    if (fstat(fd,&st)==-1) {
+        if (error)
+            sv_setpvf(error,"file '%s' could not be fstat()ed", file);
+        return MPH_MOUNT_ERROR_FSTAT_FAILED;
+    }
+    if (st.st_size < sizeof(struct mph_header)) {
+        if (error)
+            sv_setpvf(error,"file '%s' is too small to be a valid PH2L file", file);
+        return MPH_MOUNT_ERROR_TOO_SMALL;
+    }
+    if (st.st_size % 16) {
+        if (error)
+            sv_setpvf(error,"file '%s' does not have a size which is a multiple of 16 bytes", file);
+        return MPH_MOUNT_ERROR_BAD_SIZE;
+    }
     ptr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED | MPH_MAP_POPULATE, fd, 0);
     if (ptr == MAP_FAILED) {
-        croak("failed to create mapping to file '%s'", file);
+        if (error)
+            sv_setpvf(error,"failed to create mapping to file '%s'", file);
+        return MPH_MOUNT_ERROR_MAP_FAILED;
     }
+
     obj->bytes= st.st_size;
-    obj->header= (struct mph_header*)ptr;
+    obj->header= head= (struct mph_header*)ptr;
     obj->fd= fd;
+    if (head->magic_num != 1278363728) {
+        if (error)
+            sv_setpvf(error,"file '%s' is not a PH2L file", file);
+        return MPH_MOUNT_ERROR_BAD_MAGIC;
+    }
+    if (head->variant>1) {
+        if (error)
+            sv_setpvf(error,"unknown version '%d' in '%s'", head->variant, file);
+        return MPH_MOUNT_ERROR_BAD_VERSION;
+    }
+    if (
+        head->table_ofs < head->state_ofs           ||
+        head->key_flags_ofs < head->table_ofs       ||
+        head->val_flags_ofs < head->key_flags_ofs   ||
+        head->str_buf_ofs < head->val_flags_ofs     ||
+        st.st_size < head->str_buf_ofs
+    ) {
+        if (error)
+            sv_setpvf(error,"corrupt header offsets in '%s'", file);
+        return MPH_MOUNT_ERROR_CORRUPT_OFFSETS;
+    }
+    if (flags && MPH_F_VALIDATE) {
+        char *start= ptr;
+        char *state_pv= start + head->state_ofs;
+        char *str_buf_start= start + head->str_buf_ofs;
+        char *str_buf_end= start + st.st_size;
+        U64 table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
+        U64 str_buf_checksum= stadtx_hash_with_state(state_pv, start + head->str_buf_ofs, st.st_size - head->str_buf_ofs );
+        if (head->table_checksum != table_checksum) {
+            if (error)
+                sv_setpvf(error,"table checksum '%016lx' != '%016lx' in file '%s'",table_checksum,head->table_checksum,file);
+            return MPH_MOUNT_ERROR_CORRUPT_TABLE;
+        }
+        if (head->str_buf_checksum != str_buf_checksum) {
+            if (error)
+                sv_setpvf(error,"table checksum '%016lx' != '%016lx' in file '%s'",str_buf_checksum,head->str_buf_checksum,file);
+            return MPH_MOUNT_ERROR_CORRUPT_STR_BUF;
+        }
+    }
+    return head->variant;
 }
 
 void
@@ -259,12 +344,14 @@ STRLEN
 normalize_with_flags(pTHX_ SV *sv, SV *normalized_sv, SV *is_utf8_sv, int downgrade) {
     STRLEN len;
     if (SvROK(sv)) {
-        croak("not expecting a reference in downgrade_with_flags()");
+        croak("Error: Not expecting a reference value in source hash");
     }
     sv_setsv(normalized_sv,sv);
     if (SvOK(sv)) {
         STRLEN pv_len;
         char *pv= SvPV(sv,pv_len);
+        if (pv_len > 0xFFFF)
+            croak("Error: String in source hash is too long to store, max length is %u got length %lu", 0xFFFF, pv_len);
         if (SvUTF8(sv)) {
             if (downgrade)
                 sv_utf8_downgrade(normalized_sv,1);
@@ -301,7 +388,7 @@ U32 compute_max_xor_val(const U32 n, const U32 variant) {
         n_copy = n_copy >> 1;
     }
 
-    if (n_bits > 1) {
+    if ( n_bits > 1 ) {
         return variant ? INT32_MAX : UINT32_MAX;
     } else {
         return n;
@@ -338,9 +425,8 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
         STRLEN key_len;
         U64 h0;
 
-        if (!val_sv) croak("no sv?");
+        if (!val_sv) croak("panic: no sv for value?");
         if (!SvOK(val_sv) && (compute_flags & MPH_F_FILTER_UNDEF)) continue;
-        if (SvROK(val_sv)) croak("do not know how to handle reference values");
 
         hv= newHV();
         val_normalized_sv= newSV(0);
@@ -350,12 +436,6 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
         key_normalized_sv= newSV(0);
         key_is_utf8_sv= newSVuv(0);
 
-        buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
-        buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
-
-        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
-        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
-
         hv_ksplit(hv,15);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY,            key_sv);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED, key_normalized_sv);
@@ -363,9 +443,17 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL,            SvREFCNT_inc_simple_NN(val_sv));
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
+        /* install everything into the keys_av just in case normalize_with_flags() dies */
+        av_push(keys_av,newRV_noinc((SV*)hv));
+
+        buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
+        buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
+
+        key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
+        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
+
         hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
 
-        av_push(keys_av,newRV_noinc((SV*)hv));
     }
     if (buf_length_sv)
         sv_setuv(buf_length_sv, buf_length);
@@ -387,11 +475,12 @@ find_first_level_collisions(U32 bucket_count, AV *keys_av, AV *keybuckets_av, AV
         SV* h0_sv;
         HE* h0_he;
         HV *hv;
+        AV *av;
         got_psv= av_fetch(keys_av,i,0);
-        if (!got_psv || !SvROK(*got_psv)) croak("bad item in keys_av");
+        if (!got_psv || !SvROK(*got_psv)) croak("panic: bad item in keys_av");
         hv= (HV *)SvRV(*got_psv);
         h0_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_H0,0);
-        if (!h0_he) croak("no h0?");
+        if (!h0_he) croak("panic: no h0_he?");
         h0_sv= HeVAL(h0_he);
         h0= SvUV(h0_sv);
 
@@ -400,29 +489,25 @@ find_first_level_collisions(U32 bucket_count, AV *keys_av, AV *keybuckets_av, AV
         idx1= h1 % bucket_count;
         got_psv= av_fetch(h2_packed_av,idx1,1);
         if (!got_psv)
-            croak("panic, out of memory?");
+            croak("panic: out of memory creating new h2_packed_av element");
         if (!SvPOK(*got_psv))
             sv_setpvs(*got_psv,"");
         sv_catpvn(*got_psv, (char *)&h2, 4);
 
-        {
-            AV *av;
+        got_psv= av_fetch(keybuckets_av,idx1,1);
+        if (!got_psv)
+            croak("panic: out of memory creating new keybuckets_av element");
 
-            got_psv= av_fetch(keybuckets_av,idx1,1);
-            if (!got_psv)
-                croak("oom");
-
-            if (!SvROK(*got_psv)) {
-                av= newAV();
-                sv_upgrade(*got_psv,SVt_RV);
-                SvRV_set(*got_psv,(SV *)av);
-                SvROK_on(*got_psv);
-            } else {
-                av= (AV *)SvRV(*got_psv);
-            }
-
-            av_push(av,newRV_inc((SV*)hv));
+        if (!SvROK(*got_psv)) {
+            av= newAV();
+            sv_upgrade(*got_psv,SVt_RV);
+            SvRV_set(*got_psv,(SV *)av);
+            SvROK_on(*got_psv);
+        } else {
+            av= (AV *)SvRV(*got_psv);
         }
+
+        av_push(av,newRV_inc((SV*)hv));
     }
 }
 
@@ -460,10 +545,10 @@ void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *id
     U32 keys_in_bucket_count= av_top_index(keys_in_bucket_av) + 1;
 
     SV **buckets_rvp= av_fetch(buckets_av, idx1, 1);
-    if (!buckets_rvp) croak("out of memory in buckets_av lvalue fetch");
+    if (!buckets_rvp) croak("panic: out of memory in buckets_av lvalue fetch");
     if (!SvROK(*buckets_rvp)) {
         idx1_hv= newHV();
-        if (!idx1_hv) croak("out of memory creating new hash reference");
+        if (!idx1_hv) croak("panic: out of memory creating new hash in buckets_av idx %u",idx1);
         sv_upgrade(*buckets_rvp,SVt_RV);
         SvRV_set(*buckets_rvp,(SV *)idx1_hv);
         SvROK_on(*buckets_rvp);
@@ -483,11 +568,11 @@ void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *id
         SV **buckets_rvp;
 
         keys_rvp= av_fetch(keys_in_bucket_av, i, 0);
-        if (!keys_rvp) croak("no key_info in bucket %d", i);
+        if (!keys_rvp) croak("panic: no key_info in bucket %d", i);
         keys_hv= (HV *)SvRV(*keys_rvp);
 
         buckets_rvp= av_fetch(buckets_av, *idx2, 1);
-        if (!buckets_rvp) croak("out of memory?");
+        if (!buckets_rvp) croak("panic: out of memory in lvalue fetch to buckets_av");
 
         if (!SvROK(*buckets_rvp)) {
             sv_upgrade(*buckets_rvp,SVt_RV);
@@ -551,15 +636,16 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, SV *idx1_packed_sv, AV
                 xor_val++;
             }
             while (h2_ptr < h2_end) {
-                U32 i= (*h2_ptr ^ xor_val) % bucket_count;
+                U32 idx2;
                 U32 *check_idx;
-                if (is_used[i])
+                HASH2INDEX(idx2,*h2_ptr,xor_val,bucket_count);
+                if (is_used[idx2])
                     goto next_xor_val;
                 for (check_idx= idx2_start; check_idx < idx2_ptr; check_idx++) {
-                    if (*check_idx == i)
+                    if (*check_idx == idx2)
                         goto next_xor_val;
                 }
-                *idx2_ptr= i;
+                *idx2_ptr= idx2;
                 h2_ptr++;
                 idx2_ptr++;
             }
@@ -655,7 +741,7 @@ STMT_START {                                                                \
                     HE *ofs= hv_fetch_ent(str_ofs_hv,sv,1,0);               \
                     ofs_sv= ofs ? HeVAL(ofs) : NULL;                        \
                     if (!ofs_sv)                                            \
-                        croak("oom getting ofs for " #he "for %u",i);       \
+                        croak("panic: out of memory getting str ofs for " #he "for %u",i);  \
                 }                                                           \
                 if (ofs_sv && SvOK(ofs_sv)){                                \
                     table[i].key_ofs= SvUV(ofs_sv);                         \
@@ -666,7 +752,7 @@ STMT_START {                                                                \
                     if (pv_len) {                                           \
                         table[i].key_ofs= str_buf_pos - str_buf_start;      \
                         if (str_buf_pos + pv_len > str_buf_end)             \
-                            croak("panic: string buffer too small!");       \
+                            croak("panic: string buffer too small in SETOFS, something went horribly wrong."); \
                         Copy(pv,str_buf_pos,pv_len,char);                   \
                         str_buf_pos += pv_len;                              \
                     } else {                                                \
@@ -724,7 +810,7 @@ hash_with_state(str_sv,state_sv)
     U8 *str_pv= (U8 *)SvPV(str_sv,str_len);
     state_pv= (U8 *)SvPV(state_sv,state_len);
     if (state_len != STADTX_STATE_BYTES) {
-        croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
+        croak("Error: state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
     }
     RETVAL= stadtx_hash_with_state(state_pv,str_pv,str_len);
 }
@@ -744,9 +830,9 @@ seed_state(base_seed_sv)
     U8 *state_pv;
     SV *seed_sv;
     if (!SvOK(base_seed_sv))
-        croak("seed must be defined");
+        croak("Error: seed must be defined");
     if (SvROK(base_seed_sv))
-        croak("seed should not be a reference");
+        croak("Error: seed should not be a reference");
     seed_sv= base_seed_sv;
     seed_pv= (U8 *)SvPV(seed_sv,seed_len);
 
@@ -824,14 +910,14 @@ compute_xs(self_hv)
     if (he) {
         variant= SvUV(HeVAL(he));
     } else {
-        croak("no variant?");
+        croak("panic: no variant in self?");
     }
 
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_COMPUTE_FLAGS,0);
     if (he) {
         compute_flags= SvUV(HeVAL(he));
     } else {
-        croak("no compute_flags?");
+        croak("panic: no compute_flags in self?");
     }
 
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_STATE,0);
@@ -839,24 +925,24 @@ compute_xs(self_hv)
         SV *state_sv= HeVAL(he);
         state_pv= (U8 *)SvPV(state_sv,state_len);
         if (state_len != STADTX_STATE_BYTES) {
-            croak("state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
+            croak("Error: state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
         }
     } else {
-        croak("no state?");
+        croak("panic: no state in self?");
     }
 
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_BUF_LENGTH,1);
     if (he) {
         buf_length_sv= HeVAL(he);
     } else {
-        croak("no buf_length?");
+        croak("panic: out of memory in lvalue fetch for 'buf_length' in self");
     }
 
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_SOURCE_HASH,0);
     if (he) {
         source_hv= (HV*)SvRV(HeVAL(he));
     } else {
-        croak("no source_hash?");
+        croak("panic: no source_hash in self");
     }
 
     he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_BUCKETS,1);
@@ -872,7 +958,7 @@ compute_xs(self_hv)
         SvRV_set(rv,(SV*)buckets_av);
         SvROK_on(rv);
     } else {
-        croak("no buckets in self?");
+        croak("panic: out of memory in lvalue fetch for 'buckets' in self");
     }
 
     /**** build an array of hashes in keys_av based on the normalized contents of source_hv */
@@ -902,7 +988,6 @@ compute_xs(self_hv)
      * with the most collisions - we use this later to size some of our data structures.
      */
     by_length_av= idx_by_length(aTHX_ keybuckets_av);
-
         
     RETVAL= solve_collisions_by_length(aTHX_ bucket_count, max_xor_val, by_length_av, h2_packed_av, keybuckets_av, 
         variant, buckets_av);
@@ -1012,13 +1097,13 @@ packed(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
             UV u= SvUV(HeVAL(key_is_utf8_he));
             SETBITS(u,key_flags,i,2);
         } else {
-            croak("no key_is_utf8_he for %u",i);
+            croak("panic: out of memory? no key_is_utf8_he for %u",i);
         }
         if (val_is_utf8_he) {
             UV u= SvUV(HeVAL(val_is_utf8_he));
             SETBITS(u,val_flags,i,1);
         } else {
-            croak("no val_is_utf8_he for %u",i);
+            croak("panic: out of memory? no val_is_utf8_he for %u",i);
         }
     }
     {
@@ -1042,15 +1127,21 @@ packed(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         RETVAL
 
 SV*
-mount_file(file_sv)
+mount_file(file_sv,error_sv,flags)
         SV* file_sv
-    PROTOTYPE: $
+        SV* error_sv
+        U32 flags
+    PROTOTYPE: $$$
     CODE:
 {
     struct mph_obj obj;
     STRLEN file_len;
     char *file_pv= SvPV(file_sv,file_len);
-    mph_mmap(aTHX_ file_pv,&obj);
+    IV mmap_status= mph_mmap(aTHX_ file_pv, &obj, error_sv, flags);
+    if (mmap_status < 0) {
+        XSRETURN_UNDEF;
+    }
+    /* copy obj into a new SV which we can return */
     RETVAL= newSVpvn((char *)&obj,sizeof(struct mph_obj));
     SvPOK_on(RETVAL);
     SvREADONLY_on(RETVAL);

@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 85;
+use Test::More tests => 197;
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 my $class;
@@ -31,6 +31,11 @@ my @source_hashes= (
         $must_be_utf8 => $must_be_utf8,
         #map { chr($_) => chr($_) } 250..260,
     },
+    { map { $_ => $_ } 1 .. 8 },
+    { map { $_ => $_ } 1 .. 16 },
+    { map { $_ => $_ } 1 .. 32 },
+    { map { $_ => $_ } 1 .. 64 },
+
 );
 
 foreach my $variant (0..1) {

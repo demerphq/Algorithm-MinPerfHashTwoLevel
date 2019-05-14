@@ -28,9 +28,13 @@ our @EXPORT = qw();
 
 
 sub TIEHASH {
-    my ($class,$file)= @_;
-    #warn "tieing '$file':$!";
-    my $mount= mount_file($file);
+    my ($class,$file,$flags)= @_;
+    $flags ||= 0;
+    my $error;
+    my $mount= mount_file($file,$error,$flags);
+    if (!defined($mount)) {
+        die "Error in TIEHASH: $error";
+    }
     my %perl_obj= (
         mount => $mount,
         file => $file,
@@ -54,8 +58,7 @@ sub EXISTS {
 sub FIRSTKEY {
     my ($self)= @_;
     $self->{iter_idx}= 0;
-    fetch_by_index($self->{mount},$self->{iter_idx}++,my $key);
-    return $key;
+    return $self->NEXTKEY();
 }
 
 sub NEXTKEY {

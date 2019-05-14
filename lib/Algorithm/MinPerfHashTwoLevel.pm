@@ -109,7 +109,7 @@ sub _compute_first_level_inner {
 
     my $bad_idx= compute_xs($self);
     if ($bad_idx) {
-        printf " Index '%d' not solved.\n", $bad_idx-1;
+        printf " Index '%d' not solved, new seed required.\n", $bad_idx-1;
         return undef;
     }
 
