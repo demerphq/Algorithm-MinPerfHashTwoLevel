@@ -24,6 +24,7 @@ WriteMakefile(
       (ABSTRACT_FROM  => 'lib/Algorithm/MinPerfHashTwoLevel.pm', # retrieve abstract from module
        AUTHOR         => 'Yves Orton <yorton@(none)>') : ()),
     LIBS              => [''], # e.g., '-lm'
+    LICENSE           => 'perl',
     DEFINE            => '', # e.g., '-DHAVE_SOMETHING'
     INC               => '-I.', # e.g., '-I. -I/usr/include/other'
     OPTIMIZE          => '-O3',
