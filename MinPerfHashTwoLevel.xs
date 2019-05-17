@@ -16,34 +16,34 @@
 #include "mph2l.h"
 
 
-#define sv_set_from_bucket(sv,strs,ofs,len,idx,flags,bits) \
-STMT_START {                                            \
-    U8 *ptr;                                            \
-    U8 is_utf8;                                         \
-    if (ofs) {                                          \
-        ptr= (strs) + (ofs);                            \
-        GETBITS(is_utf8,flags,idx,bits);                \
-    } else {                                            \
-        ptr= 0;                                         \
-        is_utf8= 0;                                     \
-    }                                                   \
-    /* note that sv_setpvn() will cause the sv to       \
-     * become undef if ptr is 0 */                      \
-    sv_setpvn_mg((sv),ptr,len);                         \
-    if (is_utf8 > 1) {                                  \
-        sv_utf8_upgrade(sv);                            \
-    }                                                   \
-    else                                                \
-    if (is_utf8) {                                      \
-        SvUTF8_on(sv);                                  \
-    }                                                   \
-    else                                                \
-    if (ptr) {                                          \
-        SvUTF8_off(sv);                                 \
-    }                                                   \
-} STMT_END
+PERL_STATIC_INLINE void
+sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits) {
+    U8 *ptr;
+    U8 is_utf8;
+    if (ofs) {
+        ptr= (strs) + (ofs);
+        GETBITS(is_utf8,flags,idx,bits);
+    } else {
+        ptr= 0;
+        is_utf8= 0;
+    }
+    /* note that sv_setpvn() will cause the sv to
+     * become undef if ptr is 0 */
+    sv_setpvn_mg((sv),ptr,len);
+    if (is_utf8 > 1) {
+        sv_utf8_upgrade(sv);
+    }
+    else
+    if (is_utf8) {
+        SvUTF8_on(sv);
+    }
+    else
+    if (ptr) {
+        SvUTF8_off(sv);
+    }
+}
 
-int
+PERL_STATIC_INLINE int
 lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
 {
     struct mph_bucket *bucket;
@@ -54,15 +54,15 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
     bucket= (struct mph_bucket *)((char *)mph + mph->table_ofs) + index;
     strs= (U8 *)mph + mph->str_buf_ofs;
     if (key_sv) {
-        sv_set_from_bucket(key_sv,strs,bucket->key_ofs,bucket->key_len,index,((U8*)mph)+mph->key_flags_ofs,2);
+        sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,((U8*)mph)+mph->key_flags_ofs,2);
     }
     if (val_sv) {
-        sv_set_from_bucket(val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
+        sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
     }
     return 1;
 }
 
-int
+PERL_STATIC_INLINE int
 lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
 {
     U8 *strs= (U8 *)mph + mph->str_buf_ofs;
@@ -102,7 +102,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     got_key_pv= strs + bucket->key_ofs;
     if (bucket->key_len == key_len && memEQ(key_pv,got_key_pv,key_len)) {
         if (val_sv) {
-            sv_set_from_bucket(val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
+            sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
         }
         return 1;
     }
@@ -635,26 +635,7 @@ MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLeve
 
 BOOT:
 {
-  {
-    MY_CXT_INIT;
-    MPH_INIT_KEYSV(MPH_KEYSV_IDX,"idx");
-    MPH_INIT_KEYSV(MPH_KEYSV_H1_KEYS,"h1_keys");
-    MPH_INIT_KEYSV(MPH_KEYSV_XOR_VAL,"xor_val");
-    MPH_INIT_KEYSV(MPH_KEYSV_H0,"h0");
-    MPH_INIT_KEYSV(MPH_KEYSV_KEY,"key");
-    MPH_INIT_KEYSV(MPH_KEYSV_KEY_NORMALIZED,"key_normalized");
-    MPH_INIT_KEYSV(MPH_KEYSV_KEY_IS_UTF8,"key_is_utf8");
-    MPH_INIT_KEYSV(MPH_KEYSV_VAL,"val");
-    MPH_INIT_KEYSV(MPH_KEYSV_VAL_NORMALIZED,"val_normalized");
-    MPH_INIT_KEYSV(MPH_KEYSV_VAL_IS_UTF8,"val_is_utf8");
-
-    MPH_INIT_KEYSV(MPH_KEYSV_VARIANT,"variant");
-    MPH_INIT_KEYSV(MPH_KEYSV_COMPUTE_FLAGS,"compute_flags");
-    MPH_INIT_KEYSV(MPH_KEYSV_STATE,"state");
-    MPH_INIT_KEYSV(MPH_KEYSV_SOURCE_HASH,"source_hash");
-    MPH_INIT_KEYSV(MPH_KEYSV_BUF_LENGTH,"buf_length");
-    MPH_INIT_KEYSV(MPH_KEYSV_BUCKETS,"buckets");
-  }
+    MPH_INIT_ALL_KEYSV();
 }
 
 UV
@@ -860,7 +841,7 @@ compute_xs(self_hv)
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::OnDisk
 
 SV *
-packed(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
+packed_xs(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         SV* version_sv
         SV* buf_length_sv
         SV* state_sv
@@ -1058,8 +1039,8 @@ fetch_by_key(mount_sv,key_sv,...)
 
 
 SV *
-get_comment(mount_sv)
-        SV* mount_sv
+get_comment(self_hv)
+        HV* self_hv
     ALIAS:
             get_hdr_magic_num = 1
             get_hdr_variant = 2
@@ -1074,7 +1055,15 @@ get_comment(mount_sv)
     PROTOTYPE: $
     CODE:
 {
-    struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    struct mph_obj *obj;
+    SV *mount_sv;
+    HE *got= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_MOUNT,0);
+    if (!got)
+        croak("must be mounted to use this function");
+    mount_sv= HeVAL(got);
+    if (!mount_sv || !SvPOK(mount_sv))
+        croak("$self->'mount' is expected to be a string!");
+    obj= (struct mph_obj *)SvPV_nolen(mount_sv);
     switch(ix) {
         case  0: 
             {

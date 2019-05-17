@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 2 + 112 * (defined($ENV{VARIANT}) ? 1 : 3);
+use Test::More tests => 2 + 238 * (defined($ENV{VARIANT}) ? 1 : 3);
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 my $class;
@@ -24,18 +24,17 @@ my @source_hashes= (
         fiz => "shmang",
         plop => "shwoosh",
     },
-    { map { $_ => $_ } 1..50000 },
+    { map { $_ => $_ } 1 .. 50000 },
     {
         $not_utf8 => $not_utf8,
         $utf8_can_be_downgraded => $utf8_can_be_downgraded,
         $must_be_utf8 => $must_be_utf8,
-        #map { chr($_) => chr($_) } 250..260,
+        map { chr($_) => chr($_) } 250..260,
     },
     { map { $_ => $_ } 1 .. 8 },
     { map { $_ => $_ } 1 .. 16 },
     { map { $_ => $_ } 1 .. 32 },
     { map { $_ => $_ } 1 .. 64 },
-
 );
 
 foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
@@ -45,15 +44,16 @@ foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
             my $source_hash= $source_hashes[$idx];
             my $title= "seed:$seed_str hash:$idx variant:$variant";
             my $test_file= "$tmpdir/test.$seed_str.$idx.$variant.hash";
+            my $seed_arg= $seed;
             my $got_file= $class->make_file(
                 file        => $test_file,
                 source_hash => $source_hash,
                 comment     => (my $this_comment="this is a comment: $title"),
                 debug       => $ENV{TEST_VERBOSE},
-                seed        => $seed,
+                seed        => \$seed_arg,
                 variant     => $variant,
             );
-
+            ok(defined($seed_arg),"seed_arg is defined after make_file()");
             is( $got_file,$test_file, "make_file returned as expected ($title)" );
             my ($got_variant,$got_message)= $class->validate_file(file=>$test_file);
             ok( defined $got_variant, "file validates ok ($title)")
@@ -61,8 +61,23 @@ foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
             is( $got_variant, $variant, "file variant ok ($title)");
             my %tied_hash;
             tie %tied_hash, $class, $test_file;
-            is(tied(%tied_hash)->comment, $this_comment, "comment works as expected");
-            my (@got_keys,@want_keys);
+            my $scalar= scalar(%tied_hash);
+            ok($scalar,"scalar works");
+            my $obj= tied(%tied_hash);
+            is($obj->get_comment, $this_comment, "comment works as expected");
+            is($obj->get_hdr_variant, $variant, "variant is as expected");
+            is($obj->get_hdr_num_buckets, 0+keys %$source_hash,"num_buckets is as expected");
+            my @ofs=(
+                $obj->get_hdr_state_ofs,
+                $obj->get_hdr_table_ofs,
+                $obj->get_hdr_key_flags_ofs,
+                $obj->get_hdr_val_flags_ofs,
+                $obj->get_hdr_str_buf_ofs,
+            );
+            my @srt_ofs= sort{ $a <=> $b } @ofs;
+            is("@ofs","@srt_ofs","offsets in the right order");
+
+            my (@got_keys,@got_fetch_values,@want_keys);
             {
                 my @bad;
                 foreach my $key (sort keys %$source_hash) {
@@ -74,7 +89,7 @@ foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
                     }
                 }
                 is(0+@bad,0,"no bad values via source_hash ($title)")
-                    or diag Dumper(\@bad);
+                    or diag Dumper($bad[0]);
             }
             {
                 my @bad;
@@ -85,11 +100,31 @@ foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
                     if (defined($got) != defined($want) or (defined($got) and $got ne $want)) {
                         push @bad, [$key,$got,$want];
                     }
+                    push @got_fetch_values, $got;
                 }
                 is(0+@bad,0,"no bad values via tied_hash ($title)")
-                    or diag Dumper(\@bad);
+                    or diag Dumper($bad[0]);
             }
+            my @got_values= sort values %tied_hash;
+            my @want_values= sort values %$source_hash;
+
+            my @got_each_keys;
+            my @got_each_values;
+            while (my($k,$v)= each(%tied_hash)) {
+                push @got_each_keys, $k;
+                push @got_each_values, $v;
+            }
+            @got_fetch_values= sort @got_fetch_values;
+            @got_each_keys= sort @got_each_keys;
+            @got_each_values= sort @got_each_values;
+
             is_deeply(\@got_keys,\@want_keys,"keys in both are the same ($title)");
+            is_deeply(\@got_each_keys,\@want_keys,"got_keys and got_each_keys agree ($title)");
+
+            is_deeply(\@got_values,\@want_values,"got_values and got_each_values agree ($title)");
+            is_deeply(\@got_fetch_values,\@want_values,"values in both are same ($title)");
+            is_deeply(\@got_each_values,\@want_values,"values in both are same ($title)");
+
             {
                 my @bad;
                 foreach my $idx (0..$#got_keys) {
@@ -98,8 +133,10 @@ foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
                     }
                 }
                 is(0+@bad,0,"no keys with differing utf8 flags ($title)")
-                    or diag Dumper(\@bad);
+                    or diag Dumper($bad[0]);
             }
+
+
         }
     }
 }

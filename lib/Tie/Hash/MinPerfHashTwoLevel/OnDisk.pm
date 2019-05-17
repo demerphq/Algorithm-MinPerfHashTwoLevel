@@ -82,11 +82,11 @@ sub NEXTKEY {
 
 sub SCALAR {
     my ($self)= @_;
+    my $buckets= $self->get_hdr_num_buckets();
     if ($scalar_has_slash) {
-        return num_buckets($self->{mount})."/".num_buckets($self->{mount});
-    } else {
-        return num_buckets($self->{mount});
+        $buckets .= "/" . $buckets;
     }
+    return $buckets;
 }
 
 sub UNTIE {
@@ -111,14 +111,6 @@ sub DELETE {
 sub CLEAR {
     my ($self)= @_;
     confess __PACKAGE__ . " is readonly, CLEAR operations are not supported";
-}
-
-sub comment {
-    my ($self)= @_;
-    if (!$self->{mount}) {
-        die "must be mounted to use comment";
-    }
-    return get_comment($self->{mount});
 }
 
 sub make_file {
@@ -147,9 +139,11 @@ sub make_file {
     die "comment cannot contain null"
         if index($comment,"\0") >= 0;
 
+    my $seed= $opts{seed};
+
     my $hasher= Algorithm::MinPerfHashTwoLevel->new(
         debug => $debug,
-        seed => $opts{seed},
+        seed => (ref $seed ? $$seed : $seed),
         variant => $variant,
         compute_flags => $flags,
         max_tries => $opts{max_tries},
@@ -157,7 +151,8 @@ sub make_file {
     my $buckets= $hasher->compute($source_hash);
     my $buf_length= $hasher->{buf_length};
     my $state= $hasher->{state};
-    my $buf= packed($variant,$buf_length,$state,$comment,$flags,@$buckets);
+    my $buf= packed_xs($variant,$buf_length,$state,$comment,$flags,@$buckets);
+    $$seed= $hasher->seed if ref $seed;
 
     my $tmp_file= "$ofile.$$";
     open my $ofh, ">", $tmp_file
