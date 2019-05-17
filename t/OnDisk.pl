@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 2 + 98 * (defined($ENV{VARIANT}) ? 1 : 3);
+use Test::More tests => 2 + 112 * (defined($ENV{VARIANT}) ? 1 : 3);
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 my $class;
@@ -48,7 +48,7 @@ foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
             my $got_file= $class->make_file(
                 file        => $test_file,
                 source_hash => $source_hash,
-                comment     => "this is a comment: $title",
+                comment     => (my $this_comment="this is a comment: $title"),
                 debug       => $ENV{TEST_VERBOSE},
                 seed        => $seed,
                 variant     => $variant,
@@ -61,6 +61,7 @@ foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. 2)) {
             is( $got_variant, $variant, "file variant ok ($title)");
             my %tied_hash;
             tie %tied_hash, $class, $test_file;
+            is(tied(%tied_hash)->comment, $this_comment, "comment works as expected");
             my (@got_keys,@want_keys);
             {
                 my @bad;

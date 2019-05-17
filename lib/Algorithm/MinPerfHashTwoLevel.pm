@@ -10,15 +10,10 @@ no warnings "portable";
 my %constant;
 BEGIN {
     %constant= (
-        NOT_UTF8 => 0,
-         IS_UTF8 => 1,
-        WAS_UTF8 => 2,
-
-        UINT64_MAX => 0xFFFFFFFFFFFFFFFF,
-        UINT32_MAX => 0xFFFFFFFF,
-        INT32_MAX  => 0x7FFFFFFF,
-        UINT16_MAX => 0xFFFF,
-        UINT8_MAX  => 0xFF,
+        MPH_F_FILTER_UNDEF      =>  (1<<0),
+        MPH_F_DETERMINISTIC     =>  (1<<1),
+       #MPH_F_NO_DEDUPE         =>  (1<<2),
+       #MPH_F_VALIDATE          =>  (1<<3),
     );
 }
 use constant \%constant;
@@ -31,8 +26,7 @@ our %EXPORT_TAGS = (
             hash_with_state
         ), sort keys %constant
     ],
-    'utf8_flags' => [ grep /UTF8/, sort keys %constant],
-    'uint_max'   => [ grep /_MAX/, sort keys %constant]
+    'flags' => [ sort grep /MPH_F_/, keys %constant ],
 );
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
@@ -50,17 +44,26 @@ use Carp ();
 sub new {
     my ($class,%opts)= @_;
     my $o= bless \%opts, $class;
-    $o->{state} = seed_state($o->{seed})
-        if $o->{seed};
+    die "seed must be exactly 16 bytes"
+        if $opts{seed} and length($opts{seed}) != 16;
+
     $o->{variant}= $DEFAULT_VARIANT unless defined $o->{variant};
     $o->{variant}= int(0+$o->{variant});
     $o->{compute_flags}=0;
-    $o->{compute_flags} += 1 if delete $o->{filter_undef};
-    $o->{compute_flags} += 2 if delete $o->{deterministic};
+    $o->{compute_flags} += MPH_F_FILTER_UNDEF  if delete $o->{filter_undef};
+    $o->{compute_flags} += MPH_F_DETERMINISTIC if delete $o->{deterministic};
     die "Unknown variant '$o->{variant}' in constructor new(), max known is 2"
         if ($o->{variant} > 2);
     return $o;
 }
+
+sub compute {
+    my ($self, $source_hash)= @_;
+    $self->{source_hash}= $source_hash if $source_hash;
+
+    return $self->_compute_first_level();
+}
+
 
 # find a suitable initial seed for
 sub _compute_first_level {
@@ -73,60 +76,78 @@ sub _compute_first_level {
         if $debug;
 
     # find the number of keys we have to deal with
-    my $n= $self->{n}= 0+keys %$source_hash;
-    my $max_tries= $self->{max_tries} || 100;
-    my $min_tries= $self->{min_tries} || 1;
-
+    my $max_tries= $self->{max_tries} || 10;
+    my @failed_seeds;
+    $self->{failed_seeds}= \@failed_seeds;
 
     # Find the base seed and build a map of the keys to the buckets that they will reside in
     SEED1:
     for my $counter ( 1 .. $max_tries ) {
-        if (!defined $self->{seed}) {
-            $self->{seed}= join "", map { chr(rand 256) } 1 .. 16;
-        }
-        if (!defined $self->{state}) {
-            $self->{state} = seed_state($self->{seed});
-        }
         my $buckets= $self->_compute_first_level_inner();
+
         if ($buckets) {
             return $buckets;
         } else {
-            print "seed failed, trying new seed\n" if $debug;
-            delete $self->{seed};
-            delete $self->{state};
+            push @failed_seeds, $self->{seed};
+            if ($counter < $max_tries) {
+                print "seed failed, trying new seed\n" if $debug;
+                delete $self->{seed};
+            }
         }
     }
-    Carp::confess("This is unexpected. We tried $max_tries times to find a seed with the appropriate properties, and we failed.\n",
-        join " ", sort keys(%$source_hash));
+    if ($max_tries == 1) {
+        die sprintf "Failed to compute minimal perfect hash using seed %s", unpack "H*", $failed_seeds[0];
+    } else {
+        Carp::confess(
+            sprintf "Failed to compute minimal perfect hash after %d tries. Seeds tried: %s",
+                $max_tries, join(" ", map { unpack "H*", $_ } @failed_seeds)
+        );
+    }
+}
+
+
+sub seed {
+    my $self= shift;
+    if (@_) {
+        $self->{seed}= shift;
+        die "Seed should be exactly %d bytes long" if length($self->{seed})!=16;
+    }
+    if ( !defined $self->{seed} ) {
+        $self->{seed}= join "", map { chr(rand 256) } 1 .. 16;
+    }
+    return $self->{seed};
+}
+
+sub state {
+    my $self= shift;
+    return $self->{state}= seed_state($self->seed());
+}
+
+sub failed_seeds {
+    my $self= shift;
+    return @{$self->{failed_seeds}||[]};
 }
 
 sub _compute_first_level_inner {
     my ($self)= @_;
     my $debug= $self->{debug};
+    my $seed= $self->seed; # ensure we have a seed,
+    my $state= $self->state; # ensure we have a state
 
     printf "checking seed %s => state: %s\n", 
-        unpack("H*",$self->{seed}), 
-        unpack("H*",$self->{state}), 
+        unpack("H*",$seed),
+        unpack("H*",$state),
         if $debug;
 
+    delete $self->{bad_idx};
     my $bad_idx= compute_xs($self);
     if ($bad_idx) {
+        $self->{bad_idx}= $bad_idx-1;
         printf " Index '%d' not solved, new seed required.\n", $bad_idx-1 if $debug;
         return undef;
     }
 
     return $self->{buckets};
-}
-
-sub compute {
-    my ($self,$source_hash)= @_;
-    $self->{source_hash}= $source_hash if $source_hash;
-
-    return $self->_compute_first_level();
-}
-
-sub state {
-    return $_[0]->{state};
 }
 
 1;

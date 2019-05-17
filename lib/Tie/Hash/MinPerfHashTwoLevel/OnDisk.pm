@@ -4,23 +4,37 @@ use warnings;
 our $VERSION = '0.10';
 
 # this also installs the XS routines we use into our namespace.
-use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', ':utf8_flags', ':uint_max', '$DEFAULT_VARIANT' );
+use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', '$DEFAULT_VARIANT', ':flags' );
 use Exporter qw(import);
-use constant MAGIC_STR => "PH2L";
+my %constants;
+BEGIN {
+    %constants= (
+        MAGIC_STR               => "PH2L",
+       #MPH_F_FILTER_UNDEF      =>  (1<<0),
+       #MPH_F_DETERMINISTIC     =>  (1<<1),
+        MPH_F_NO_DEDUPE         =>  (1<<2),
+        MPH_F_VALIDATE          =>  (1<<3),
+    );
+}
+
+use constant \%constants;
 use Carp;
 
-our %EXPORT_TAGS = ( 'all' => [ qw(
-    unmount_file
-    mount_file
-    num_buckets
-    fetch_by_index
-    fetch_by_key
+our %EXPORT_TAGS = (
+    'all' => [ qw(
+        unmount_file
+        mount_file
+        num_buckets
+        fetch_by_index
+        fetch_by_key
 
-    _test_debug
-    MAGIC_STR
-) ] );
+        _test_debug
+    ), sort keys %constants ],
+    'flags' => ['MPH_F_DETERMINISTIC', grep /MPH_F_/, sort keys %constants],
+    'magic' => [grep /MAGIC/, sort keys %constants],
+);
+
 my $scalar_has_slash= scalar(%EXPORT_TAGS)=~m!/!;
-
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
@@ -99,17 +113,12 @@ sub CLEAR {
     confess __PACKAGE__ . " is readonly, CLEAR operations are not supported";
 }
 
-
-sub _append_ofs {
-    my $ofs = length($_[0]);
-    $_[1] .= "\0" while length($_[1]) % 16;
-    $_[0] .= $_[1];
-    return $ofs;
-}
-
-sub _bytes {
-    my ($n, $bits)= @_;
-    return int( ( $n + ( $bits - 1 ) ) / $bits );
+sub comment {
+    my ($self)= @_;
+    if (!$self->{mount}) {
+        die "must be mounted to use comment";
+    }
+    return get_comment($self->{mount});
 }
 
 sub make_file {
@@ -122,9 +131,17 @@ sub make_file {
     $opts{comment}= "" unless defined $opts{comment};
     $opts{variant}= $DEFAULT_VARIANT unless defined $opts{variant};
     
-    my $comment= $opts{comment};
+    my $comment= $opts{comment}||"";
     my $debug= $opts{debug} || 0;
     my $variant= int($opts{variant});
+    my $flags= int($opts{flags}||0);
+    $flags += MPH_F_NO_DEDUPE if delete $opts{no_dedupe};
+    $flags += MPH_F_DETERMINISTIC
+        if delete $opts{canonical} or
+           delete $opts{deterministic};
+    $flags += MPH_F_FILTER_UNDEF
+        if delete $opts{filter_undef};
+
     die "Unknown file variant $variant" if $variant > 2 or $variant < 0;
 
     die "comment cannot contain null"
@@ -134,12 +151,12 @@ sub make_file {
         debug => $debug,
         seed => $opts{seed},
         variant => $variant,
+        compute_flags => $flags,
+        max_tries => $opts{max_tries},
     );
     my $buckets= $hasher->compute($source_hash);
     my $buf_length= $hasher->{buf_length};
     my $state= $hasher->{state};
-    my $flags= 0;
-    $flags += (1<<2) if delete $opts{no_dedupe};
     my $buf= packed($variant,$buf_length,$state,$comment,$flags,@$buckets);
 
     my $tmp_file= "$ofile.$$";
