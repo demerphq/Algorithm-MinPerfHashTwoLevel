@@ -30,8 +30,36 @@
 #define MPH_KEYSV_SOURCE_HASH       13
 #define MPH_KEYSV_BUF_LENGTH        14
 #define MPH_KEYSV_BUCKETS           15
+#define MPH_KEYSV_MOUNT             16
 
-#define COUNT_MPH_KEYSV 16
+#define COUNT_MPH_KEYSV 17
+
+#define MPH_INIT_KEYSV(idx, str) STMT_START {                           \
+    MY_CXT.keysv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
+    PERL_HASH(MY_CXT.keysv[idx].hash, (str ""), (sizeof(str) - 1));     \
+} STMT_END
+
+#define MPH_INIT_ALL_KEYSV() STMT_START {\
+    MY_CXT_INIT;                                                \
+    MPH_INIT_KEYSV(MPH_KEYSV_IDX,"idx");                        \
+    MPH_INIT_KEYSV(MPH_KEYSV_H1_KEYS,"h1_keys");                \
+    MPH_INIT_KEYSV(MPH_KEYSV_XOR_VAL,"xor_val");                \
+    MPH_INIT_KEYSV(MPH_KEYSV_H0,"h0");                          \
+    MPH_INIT_KEYSV(MPH_KEYSV_KEY,"key");                        \
+    MPH_INIT_KEYSV(MPH_KEYSV_KEY_NORMALIZED,"key_normalized");  \
+    MPH_INIT_KEYSV(MPH_KEYSV_KEY_IS_UTF8,"key_is_utf8");        \
+    MPH_INIT_KEYSV(MPH_KEYSV_VAL,"val");                        \
+    MPH_INIT_KEYSV(MPH_KEYSV_VAL_NORMALIZED,"val_normalized");  \
+    MPH_INIT_KEYSV(MPH_KEYSV_VAL_IS_UTF8,"val_is_utf8");        \
+                                                                \
+    MPH_INIT_KEYSV(MPH_KEYSV_VARIANT,"variant");                \
+    MPH_INIT_KEYSV(MPH_KEYSV_COMPUTE_FLAGS,"compute_flags");    \
+    MPH_INIT_KEYSV(MPH_KEYSV_STATE,"state");                    \
+    MPH_INIT_KEYSV(MPH_KEYSV_SOURCE_HASH,"source_hash");        \
+    MPH_INIT_KEYSV(MPH_KEYSV_BUF_LENGTH,"buf_length");          \
+    MPH_INIT_KEYSV(MPH_KEYSV_BUCKETS,"buckets");                \
+    MPH_INIT_KEYSV(MPH_KEYSV_MOUNT,"mount");                    \
+} STMT_END
 
 #define MPH_F_FILTER_UNDEF          (1<<0)
 #define MPH_F_DETERMINISTIC         (1<<1)
@@ -56,11 +84,6 @@
 #define av_top_index(x) av_len(x)
 #endif
 
-
-#define MPH_INIT_KEYSV(idx, str) STMT_START {                           \
-    MY_CXT.keysv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
-    PERL_HASH(MY_CXT.keysv[idx].hash, (str ""), (sizeof(str) - 1));     \
-} STMT_END
 
 #define hv_fetch_ent_with_keysv(hv,keysv_idx,lval)                      \
     hv_fetch_ent(hv,MY_CXT.keysv[keysv_idx].sv,lval,MY_CXT.keysv[keysv_idx].hash);
