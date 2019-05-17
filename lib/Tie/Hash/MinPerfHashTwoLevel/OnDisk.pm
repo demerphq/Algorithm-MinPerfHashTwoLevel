@@ -21,15 +21,7 @@ use constant \%constants;
 use Carp;
 
 our %EXPORT_TAGS = (
-    'all' => [ qw(
-        unmount_file
-        mount_file
-        num_buckets
-        fetch_by_index
-        fetch_by_key
-
-        _test_debug
-    ), sort keys %constants ],
+    'all' => [ qw(mph2l_tied_hashref mph2l_make_file), sort keys %constants ],
     'flags' => ['MPH_F_DETERMINISTIC', grep /MPH_F_/, sort keys %constants],
     'magic' => [grep /MAGIC/, sort keys %constants],
 );
@@ -39,20 +31,43 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
+sub mph2l_tied_hashref {
+    my ($file, $validate)= @_;
+    my %tied;
+    tie %tied, __PACKAGE__, $file, $validate ? MPH_F_VALIDATE : 0;
+    return \%tied;
+}
+
+sub mph2l_make_file {
+    my (%opts)= @_;
+    return __PACKAGE__->make_file(%opts);
+}
+
+
+sub new {
+    my ($class, %opts)= @_;
+
+    my $error_rsv= delete $opts{error_rsv};
+    $opts{flags} ||= 0;
+    my $error;
+    my $mount= mount_file($opts{file},$error,$opts{flags});
+    if ($error_rsv) {
+        $$error_rsv= $error;
+    }
+    if (!defined($mount)) {
+        if ($error_rsv) {
+            return;
+        } else {
+            die "Failed to mount file '$opts{file}': $error";
+        }
+    }
+    $opts{mount}= $mount;
+    return bless \%opts, $class;
+}
 
 sub TIEHASH {
     my ($class,$file,$flags)= @_;
-    $flags ||= 0;
-    my $error;
-    my $mount= mount_file($file,$error,$flags);
-    if (!defined($mount)) {
-        die "Error in TIEHASH: $error";
-    }
-    my %perl_obj= (
-        mount => $mount,
-        file => $file,
-    );
-    return bless \%perl_obj, $class;
+    return $class->new(file=>$file,flags=>$flags);
 }
 
 sub FETCH {
@@ -126,11 +141,17 @@ sub make_file {
     my $comment= $opts{comment}||"";
     my $debug= $opts{debug} || 0;
     my $variant= int($opts{variant});
+    my $deterministic= $opts{canonical} || $opts{deterministic};
+    delete $opts{canonical};
+    delete $opts{deterministic};
+
+                    #1234567812345678
+    $opts{seed} //= "MinPerfHash2Levl"
+        if $deterministic;
     my $flags= int($opts{flags}||0);
     $flags += MPH_F_NO_DEDUPE if delete $opts{no_dedupe};
     $flags += MPH_F_DETERMINISTIC
-        if delete $opts{canonical} or
-           delete $opts{deterministic};
+        if $deterministic;
     $flags += MPH_F_FILTER_UNDEF
         if delete $opts{filter_undef};
 
@@ -140,7 +161,6 @@ sub make_file {
         if index($comment,"\0") >= 0;
 
     my $seed= $opts{seed};
-
     my $hasher= Algorithm::MinPerfHashTwoLevel->new(
         debug => $debug,
         seed => (ref $seed ? $$seed : $seed),
@@ -171,7 +191,31 @@ sub validate_file {
     my $file= $opts{file}
         or die "file is a mandatory option to validate_file";
     my $verbose= $opts{verbose};
-    my ($variant,$msg)= $class->_validate_file(%opts);
+    my ($variant,$msg);
+
+    my $error_sv;
+    my $self= $class->new(file => $file, flags => MPH_F_VALIDATE, error_rsv => \$error_sv);
+    if ($self) {
+        $msg= sprintf "file '%s' is a valid '%s' file\n"
+         . "  variant: %d\n"
+         . "  keys: %d\n"
+         . "  hash-state: %s\n"
+         . "  table  checksum: %016x\n"
+         . "  string checksum: %016x\n"
+         . "  comment: %s"
+         ,  $file,
+            MAGIC_STR,
+            $self->get_hdr_variant,
+            $self->get_hdr_num_buckets,
+            unpack("H*", $self->get_state),
+            $self->get_hdr_table_checksum,
+            $self->get_hdr_str_buf_checksum,
+            $self->get_comment,
+        ;
+        $variant = $self->get_hdr_variant;
+    } else {
+        $msg= $error_sv;
+    }
     if ($verbose) {
         if (defined $variant) {
             print $msg;
@@ -179,74 +223,13 @@ sub validate_file {
             die $msg."\n";
         }
     }
-    return ($variant,$msg);
+    return ($variant, $msg);
 }
 
 sub _validate_file {
-    my ($class, %opts)= @_;
-    my $file= $opts{file}
-        or die "file is a mandatory option to validate_file";
-
-    open my $fh, "<", $file
-        or die "cannot read '$file' for validation: $!";
-    my $fixed_header_size= (4 * 8 + 2 * 8);
-    my $file_size= -s $fh;
-    if ($file_size < $fixed_header_size) {
-        return(undef, "file '$file' cannot be a valid '" . MAGIC_STR . "' file - too small to be valid.");
-    }
-    local $/= \$fixed_header_size;
-    my $head= scalar <$fh>;
-    
-    if (substr($head,0,4) ne MAGIC_STR) {
-        return(undef, "file '$file' is not a valid '" . MAGIC_STR . "' file - missing magic header.");
-    }
-
-    my ( $magic_num, $variant,       $num_buckets,      $state_ofs,
-         $table_ofs, $key_flags_ofs, $val_flags_ofs,    $str_buf_ofs,
-         $table_checksum, $str_buf_checksum )= unpack "V8Q2", $head;
-
-    if ( $variant > 2 ) {
-        return(undef,"file '$file' is an unknown '" . MAGIC_STR . "' variant $variant");
-    }
-    
-    $/= \($table_ofs - $state_ofs);
-    my $state= scalar <$fh>;
-
-    $/= \($str_buf_ofs - $table_ofs);
-    my $table_and_flags= scalar <$fh>;
-
-    undef $/;
-    my $str_buf= <$fh>;
-
-    my $got_table_checksum= hash_with_state($table_and_flags, $state);
-    my $got_str_buf_checksum= hash_with_state($str_buf, $state);
-    
-    if ($got_table_checksum != $table_checksum) {
-        return(undef, MAGIC_STR . " file '$file' has a corrupted table");
-    }
-    if ($got_str_buf_checksum != $str_buf_checksum) {
-        return(undef, MAGIC_STR . " file '$file' has a corrupted string buffer");
-    }
-
-    my $comment= substr($str_buf,1,index($str_buf,"\0",1));
-    my $ok_msg= sprintf "file '%s' is a valid '%s' file\n"
-         . "  variant: %d\n"
-         . "  keys: %d\n"
-         . "  hash-state: %s\n"
-         . "  table  checksum: %016x\n"
-         . "  string checksum: %016x\n"
-         . "  comment: %s"
-         , $file,
-            MAGIC_STR,
-            $variant,
-            $num_buckets,
-            unpack("h*",$state),
-            $got_table_checksum,
-            $got_str_buf_checksum,
-            $comment
-    ;
-    return ($variant,$ok_msg);
 }
+
+
 
 1;
 __END__
