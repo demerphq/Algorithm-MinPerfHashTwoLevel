@@ -173,7 +173,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
             sv_setpvf(error,"corrupt header offsets in '%s'", file);
         return MPH_MOUNT_ERROR_CORRUPT_OFFSETS;
     }
-    if (flags && MPH_F_VALIDATE) {
+    if (flags & MPH_F_VALIDATE) {
         char *start= ptr;
         char *state_pv= start + head->state_ofs;
         char *str_buf_start= start + head->str_buf_ofs;
@@ -187,7 +187,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
         }
         if (head->str_buf_checksum != str_buf_checksum) {
             if (error)
-                sv_setpvf(error,"table checksum '%016lx' != '%016lx' in file '%s'",str_buf_checksum,head->str_buf_checksum,file);
+                sv_setpvf(error,"str buf checksum '%016lx' != '%016lx' in file '%s'",str_buf_checksum,head->str_buf_checksum,file);
             return MPH_MOUNT_ERROR_CORRUPT_STR_BUF;
         }
     }
@@ -915,8 +915,8 @@ packed_xs(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
 
     Copy(state_pv,state,state_len,char);
     pv= SvPV(comment_sv,pv_len);
-    Copy(pv,str_buf_pos,pv_len+1,char);
-    str_buf_pos += pv_len + 1;
+    Copy(pv,str_buf_pos,pv_len,char);
+    str_buf_pos += pv_len + 1; /* +1 to add a trailing null */
 
     for (i= 0; i < bucket_count; i++) {
         SV **got= av_fetch(buckets_av,i,0);
@@ -1052,11 +1052,13 @@ get_comment(self_hv)
             get_hdr_str_buf_ofs = 8
             get_hdr_table_checksum = 9
             get_hdr_str_buf_checksum = 10
+            get_state = 11
     PROTOTYPE: $
     CODE:
 {
     struct mph_obj *obj;
     SV *mount_sv;
+    char *start;
     HE *got= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_MOUNT,0);
     if (!got)
         croak("must be mounted to use this function");
@@ -1064,14 +1066,9 @@ get_comment(self_hv)
     if (!mount_sv || !SvPOK(mount_sv))
         croak("$self->'mount' is expected to be a string!");
     obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    start= (char *)obj->header;
     switch(ix) {
-        case  0: 
-            {
-                char *start= (char *)obj->header;
-                char *comment_start= start + obj->header->str_buf_ofs + 2;
-                RETVAL= newSVpv(comment_start,0);
-            }
-            break;
+        case  0: RETVAL= newSVpv(start + obj->header->str_buf_ofs + 2,0); break;
         case  1: RETVAL= newSVuv(obj->header->magic_num); break;
         case  2: RETVAL= newSVuv(obj->header->variant); break;
         case  3: RETVAL= newSVuv(obj->header->num_buckets); break;
@@ -1082,6 +1079,7 @@ get_comment(self_hv)
         case  8: RETVAL= newSVuv(obj->header->str_buf_ofs); break;
         case  9: RETVAL= newSVuv(obj->header->table_checksum); break;
         case 10: RETVAL= newSVuv(obj->header->str_buf_checksum); break;
+        case 11: RETVAL= newSVpvn(start + obj->header->state_ofs, STADTX_STATE_BYTES); break;
     }
 }
     OUTPUT:

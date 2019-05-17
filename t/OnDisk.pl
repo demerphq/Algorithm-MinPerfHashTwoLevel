@@ -3,13 +3,20 @@
 use strict;
 use warnings;
 
-use Test::More tests => 2 + 238 * (defined($ENV{VARIANT}) ? 1 : 3);
+use Test::More tests => 3 + 238 * (defined($ENV{VARIANT}) ? 1 : 3);
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 my $class;
 BEGIN { use_ok($class= 'Tie::Hash::MinPerfHashTwoLevel::OnDisk') };
 my $srand= $ENV{SRAND} ? srand(0+$ENV{SRAND}) : srand();
 ok(defined($srand),"srand as expected: $srand");
+my $eval_ok= eval {
+    tie my(%fail), $class => $0;
+    1;
+};
+my $error= !$eval_ok && $@;
+ok($error,"it failed: $@");
+
 my $tmpdir= File::Temp->newdir();
 
 my $not_utf8= "not utf8: \x{DF}";
