@@ -1178,18 +1178,6 @@ unmount_file(mount_sv)
 }
 
 
-UV
-num_buckets(mount_sv)
-        SV* mount_sv
-    PROTOTYPE: $
-    CODE:
-{
-    struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
-    RETVAL= obj->header->num_buckets;
-}
-    OUTPUT:
-        RETVAL
-
 int
 fetch_by_index(mount_sv,index,...)
         SV* mount_sv
@@ -1224,3 +1212,46 @@ fetch_by_key(mount_sv,key_sv,...)
 }
     OUTPUT:
         RETVAL
+
+
+SV *
+get_comment(mount_sv)
+        SV* mount_sv
+    ALIAS:
+            get_hdr_magic_num = 1
+            get_hdr_variant = 2
+            get_hdr_num_buckets = 3
+            get_hdr_state_ofs = 4
+            get_hdr_table_ofs = 5
+            get_hdr_key_flags_ofs = 6
+            get_hdr_val_flags_ofs = 7
+            get_hdr_str_buf_ofs = 8
+            get_hdr_table_checksum = 9
+            get_hdr_str_buf_checksum = 10
+    PROTOTYPE: $
+    CODE:
+{
+    struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    switch(ix) {
+        case  0: 
+            {
+                char *start= (char *)obj->header;
+                char *comment_start= start + obj->header->str_buf_ofs + 2;
+                RETVAL= newSVpv(comment_start,0);
+            }
+            break;
+        case  1: RETVAL= newSVuv(obj->header->magic_num); break;
+        case  2: RETVAL= newSVuv(obj->header->variant); break;
+        case  3: RETVAL= newSVuv(obj->header->num_buckets); break;
+        case  4: RETVAL= newSVuv(obj->header->state_ofs); break;
+        case  5: RETVAL= newSVuv(obj->header->table_ofs); break;
+        case  6: RETVAL= newSVuv(obj->header->key_flags_ofs); break;
+        case  7: RETVAL= newSVuv(obj->header->val_flags_ofs); break;
+        case  8: RETVAL= newSVuv(obj->header->str_buf_ofs); break;
+        case  9: RETVAL= newSVuv(obj->header->table_checksum); break;
+        case 10: RETVAL= newSVuv(obj->header->str_buf_checksum); break;
+    }
+}
+    OUTPUT:
+        RETVAL
+
