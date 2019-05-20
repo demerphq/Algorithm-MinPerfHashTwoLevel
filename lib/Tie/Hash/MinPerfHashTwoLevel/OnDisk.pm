@@ -4,12 +4,12 @@ use warnings;
 our $VERSION = '0.10';
 
 # this also installs the XS routines we use into our namespace.
-use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', '$DEFAULT_VARIANT', ':flags' );
+use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', '$DEFAULT_VARIANT', ':flags', 'MAX_VARIANT' );
 use Exporter qw(import);
 my %constants;
 BEGIN {
     %constants= (
-        MAGIC_STR               => "PH2L",
+        MAGIC_STR               =>  "PH2L",
        #MPH_F_FILTER_UNDEF      =>  (1<<0),
        #MPH_F_DETERMINISTIC     =>  (1<<1),
         MPH_F_NO_DEDUPE         =>  (1<<2),
@@ -21,7 +21,7 @@ use constant \%constants;
 use Carp;
 
 our %EXPORT_TAGS = (
-    'all' => [ qw(mph2l_tied_hashref mph2l_make_file), sort keys %constants ],
+    'all' => [ qw(mph2l_tied_hashref mph2l_make_file MAX_VARIANT), sort keys %constants ],
     'flags' => ['MPH_F_DETERMINISTIC', grep /MPH_F_/, sort keys %constants],
     'magic' => [grep /MAGIC/, sort keys %constants],
 );
@@ -155,7 +155,8 @@ sub make_file {
     $flags += MPH_F_FILTER_UNDEF
         if delete $opts{filter_undef};
 
-    die "Unknown file variant $variant" if $variant > 2 or $variant < 0;
+
+    die "Unknown file variant $variant" if $variant > MAX_VARIANT or $variant < 0;
 
     die "comment cannot contain null"
         if index($comment,"\0") >= 0;
@@ -172,7 +173,7 @@ sub make_file {
     my $buf_length= $hasher->{buf_length};
     my $state= $hasher->{state};
     my $buf= packed_xs($variant,$buf_length,$state,$comment,$flags,@$buckets);
-    $$seed= $hasher->seed if ref $seed;
+    $$seed= $hasher->get_seed if ref $seed;
 
     my $tmp_file= "$ofile.$$";
     open my $ofh, ">", $tmp_file
@@ -224,9 +225,6 @@ sub validate_file {
         }
     }
     return ($variant, $msg);
-}
-
-sub _validate_file {
 }
 
 
