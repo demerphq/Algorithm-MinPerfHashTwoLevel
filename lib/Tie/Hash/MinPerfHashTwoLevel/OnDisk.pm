@@ -1,7 +1,7 @@
 package Tie::Hash::MinPerfHashTwoLevel::OnDisk;
 use strict;
 use warnings;
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 # this also installs the XS routines we use into our namespace.
 use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', '$DEFAULT_VARIANT', ':flags', 'MAX_VARIANT' );
@@ -32,25 +32,29 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 our @EXPORT = qw();
 
 sub mph2l_tied_hashref {
-    my ($file, $validate)= @_;
-    my %tied;
-    tie %tied, __PACKAGE__, $file, $validate ? MPH_F_VALIDATE : 0;
+    my ($file, %opts)= @_;
+    tie my %tied, __PACKAGE__, $file, %opts;
     return \%tied;
 }
 
 sub mph2l_make_file {
-    my (%opts)= @_;
-    return __PACKAGE__->make_file(%opts);
+    my ($file,%opts)= @_;
+    return __PACKAGE__->make_file(file => $file, %opts);
 }
 
+sub mph2l_validate_file {
+    my ($file, %opts)= @_;
+    return __PACKAGE__->validate_file(file => $file, %opts);
+}
 
 sub new {
     my ($class, %opts)= @_;
 
-    my $error_rsv= delete $opts{error_rsv};
     $opts{flags} ||= 0;
+    $opts{flags} |= MPH_F_VALIDATE if $opts{validate};
     my $error;
     my $mount= mount_file($opts{file},$error,$opts{flags});
+    my $error_rsv= delete $opts{error_rsv};
     if ($error_rsv) {
         $$error_rsv= $error;
     }
@@ -66,8 +70,8 @@ sub new {
 }
 
 sub TIEHASH {
-    my ($class,$file,$flags)= @_;
-    return $class->new(file=>$file,flags=>$flags);
+    my ($class, $file, %opts)= @_;
+    return $class->new( file => $file, %opts );
 }
 
 sub FETCH {
@@ -148,11 +152,12 @@ sub make_file {
                     #1234567812345678
     $opts{seed} //= "MinPerfHash2Levl"
         if $deterministic;
-    my $flags= int($opts{flags}||0);
-    $flags += MPH_F_NO_DEDUPE if delete $opts{no_dedupe};
-    $flags += MPH_F_DETERMINISTIC
+
+    my $compute_flags= int($opts{compute_flags}||0);
+    $compute_flags += MPH_F_NO_DEDUPE if delete $opts{no_dedupe};
+    $compute_flags += MPH_F_DETERMINISTIC
         if $deterministic;
-    $flags += MPH_F_FILTER_UNDEF
+    $compute_flags += MPH_F_FILTER_UNDEF
         if delete $opts{filter_undef};
 
 
@@ -166,13 +171,13 @@ sub make_file {
         debug => $debug,
         seed => (ref $seed ? $$seed : $seed),
         variant => $variant,
-        compute_flags => $flags,
+        compute_flags => $compute_flags,
         max_tries => $opts{max_tries},
     );
     my $buckets= $hasher->compute($source_hash);
     my $buf_length= $hasher->{buf_length};
     my $state= $hasher->{state};
-    my $buf= packed_xs($variant,$buf_length,$state,$comment,$flags,@$buckets);
+    my $buf= packed_xs($variant, $buf_length, $state, $comment, $compute_flags, @$buckets);
     $$seed= $hasher->get_seed if ref $seed;
 
     my $tmp_file= "$ofile.$$";
@@ -264,16 +269,103 @@ is readonly, and may only contain string values.
 
 =item make_file
 
-Construct a new file from a given 'source_hash' argument. The constructed
-buffer is written to the file specified by the 'file' argument. A comment
-may be added to the file via the 'comment' argument, note that comments
-may not contain null characters, although keys and value may. A predetermined
-seed may be provided to the hash function (16 bytes) via the 'seed' argument,
-however note that if it does not produce hash values that allow for the
-construction of a valid two level perfect hash then a different seed will
-be automatically selected (this will not affect the ability to use the
-constructed hash, it just may not be deterministic). The 'debug' argument
-outputs some basic status infromation about the construction process.
+Construct a new file from a given 'source_hash' argument. Takes the following arguments:
+
+=over 4
+
+=item file
+
+The file name to produce, mandatory.
+
+=item comment
+
+An arbitrary piece of text of your choosing. Can be extracted from
+the file later if needed. Only practical restriction on the value is
+that it cannot contain a null.
+
+=item seed
+
+A 16 byte string (or a reference to one) to use as the seed for
+the hashing and generation process. If this is omitted a standard default
+is chosen.
+
+If it should prove impossible to construct a solution using the seed chosen
+then a new one will be constructed deterministically from the old until a
+solution is found (see L<max_tries>) (prior to version v0.10 this used rand()).
+Should you wish to access the seed actually used for the final solution
+then you can pass in a reference to a scalar containing your chosen seed.
+The reference scalar will be updated after successful construction.
+
+Thus both of the following are valid:
+
+    Tie::Hash::MinPerfHashTwoLevel::OnDisk->make_file(seed => "1234567812345678", ...);
+    Tie::Hash::MinPerfHashTwoLevel::OnDisk->make_file(seed => \my $seed= "1234567812345678", ...);
+
+=item compute_flags
+
+This is an integer which contains various flags which control construction.
+They are as follows:
+
+       MPH_F_FILTER_UNDEF   =>  1 - filter keys with undef values
+       MPH_F_DETERMINISTIC  =>  2 - repeatable results (sort keys during processing)
+       MPH_F_NO_DEDUPE      =>  4 - do not dedupe strings in final buffer
+
+These constants can be imported via the ":flags" tag, but there are also options that
+have the equivalent result, see C<no_dedupe>, C<deterministic> and C<filter_undef>.
+
+=item no_dedupe
+
+Speed up construction at the cost of a larger string buffer by disabling
+deduplication of values and keys.  Same as setting the MPH_F_NO_DEDUPE bit
+in compute_flags.
+
+=item deterministic
+
+=item canonical
+
+Produce a canonical result from the source data set, albeit somewhat less quickly
+than normal. Note this is independent of supplying a seed, the same seed may produce
+a different result for the same set of keys without this option.  Same
+as setting the MPH_F_DETERMINISTIC bit in compute_flags.
+
+=item filter_undef
+
+Ignore keys with undef values during construction. This means that exists() checks
+may differ between source and the constructed hash table, but avoids the need to
+store such keys in the resulting file, saving space. Same as setting the
+MPH_F_FILTER_UNDEF bit in compute_flags.
+
+=item max_tries
+
+The maximum number of attempts to make to find a solution for this keyset.
+Defaults to 10. This value is more relevant for older variants, as of variant 3
+computation should succeed on first attempt unless you are extremely unlucky.
+
+=item debug
+
+Enable debug during generation.
+
+=item variant
+
+Select which variant of construction algorithm and file format to produce.
+When omitted the variant is determined by the global var
+
+   $Tie::Hash::MinPerfHashTwoLevel::DEFAULT_VARIANT
+
+which itself defaults to the latest version. This is mostly for testing,
+Older variants will be deprecated and removed eventually.
+
+The list of variants is as follows:
+
+    0 - Pure xor search, high chance of failure to construct, and "slow"
+        construction of buckets with no collisions, 16 byte alignment,
+        two checksums.
+    1 - Xor search with "fast" construction of buckets with collisions,
+        16 byte alignment, two checksums.
+    2 - Xor, fast, with inthash, 16 byte alignment, two checksums.
+    3 - Xor, fast, with inthash, 8 byte alignment, one checksum.
+
+=back
 
 =item validate_file
 
@@ -287,9 +379,71 @@ created with, etc.
 
 =back
 
+=head2 SUBS
+
+=over 4
+
+=item mph2l_tied_hashref
+
+Simple wrapper to replace the cumbersome
+
+    tie my %hash, "Tie::Hash::MinPerfHashTwoLevel::OnDisk", $file;
+
+with a simple sub that can be imported
+
+    my $hashref= mph2l_tied_hashref($file,$validate);
+
+The validate flag causes MPH_F_VALIDATE validations to occur on load.
+
+=item mph2l_make_file
+
+Sub form of L<make_file>. Eg:
+
+  use Tie::Hash::MinPerfHashTwoLevel::OnDisk;
+  Tie::Hash::MinPerfHashTwoLevel::OnDisk->make_file(@args);
+
+is identical to
+
+  use Tie::Hash::MinPerfHashTwoLevel::OnDisk qw(mph2l_make_file);
+  mph2l_make_file(@args);
+
+Sub form of C<make_file()>.
+
+=item mph2l_validate_file
+
+Sub form of C<validate_file()>. Eg:
+
+  use Tie::Hash::MinPerfHashTwoLevel::OnDisk;
+  Tie::Hash::MinPerfHashTwoLevel::OnDisk->validate_file(@args);
+
+is identical to
+
+  use Tie::Hash::MinPerfHashTwoLevel::OnDisk qw(mph2l_validate_file);
+  mph2l_validate_file(@args);
+
+=back
+
+=head2 TIED INTERFACE
+
+  my %hash;
+  tie %hash, "Tie::Hash::MinPerfHashTwoLevel::OnDisk", $some_file, $flags;
+
+will setup %hash to read from the mmapped image on disk as created by make_file().
+The underlying image is never altered, and copies of the keys and values are made
+when necessary. The flags field is an integer which contains bit-flags to control
+the reading process, currently only one flag is supported MPH_F_VALIDATE which enables
+a full file checksum before returning (forcing the data to be loaded and then read).
+By default this validation is disabled, however basic checks of that the header is
+sane will be performed on loading (or "mounting") the image. The tie operation may
+die if the file is not found or any of these checks fail.
+
+As this is somewhat cumbersome to type you may want to look at the mph2l_tied_hashref()
+function which is wrapper around this function.
+
 =head2 FILE FORMAT
 
-Currently there is only one file format, variant 0.
+Currently there are four file format variants, 0 through 3. In general the file formats
+are very similar.
 
 The file structure consists of a header, followed by a byte vector of seed/state
 data for the hash function, followed by a bucket table with records of a fixed size,
@@ -312,7 +466,7 @@ Structure:
 Header:
 
     U32 magic_num       -> 1278363728 -> "PH2L"
-    U32 variant         -> 0
+    U32 variant         -> 3
     U32 num_buckets     -> number of buckets/keys in hash
     U32 state_ofs       -> offset in file where hash preseeded state is found
     U32 table_ofs       -> offset in file where bucket table starts
@@ -322,30 +476,38 @@ Header:
     U64 table_checksum  -> hash value checksum of table and key/val flags
     U64 str_buf_checksum-> hash value checksum of string data
 
-All "_ofs" members in the header are aligned on 16 byte boundaries and
-may be right padded with nulls if necessary to make them a multiple of 16 bytes
-long, including the string buffer.
+All "_ofs" members in the header are aligned on 16 byte boundaries for variants
+0-2, and on 8 byte boundaries for later variants, and may be right padded with nulls
+if necessary to make them be the correct length.
 
 The string buffer contains the comment at str_buf_ofs+1, its length can be found
 with strlen(), the comment may NOT contain nulls, and will be null terminated. All
 other strings in the table are NOT null padded, the length data stored in the
-bucket records should be used to determine the length of the keys and values.
+bucket records should be used to determine the length of the keys and values. In
+variant 3 and later the last 8 bytes of the string buffer contains a hash checksum
+of the rest of the entire file. This value is itself 8 byte aligned.
 
 The table_checksum is the hash (using the seed/state data stored at state_ofs)
 of the data in the file from table_ofs to str_buf_ofs, eg it includes the
 key_flags bit vector and val_flags bit vector. The str_buf_checksum is
-similar but of the data from the str_buf_ofs to the end of the file.
+similar but of the data from the str_buf_ofs to the end of the file. In variant
+3 and later these fields are not used and will be set to 0. In some future
+variant they may be repurposed.
 
 Buckets:
 
    U32 xor_val      -> the xor_val for this bucket's h1 lookups (0 means none)
+                       for variant 1 and later this may also be treated as a signed
+                       integer, with negative values representing the index of
+                       the bucket which contains the correct key (-index-1).
    U32 key_ofs      -> offset from str_buf_ofs to find this key (nonzero always)
    U32 val_ofs      -> offset from str_buf_ofs to find this value (0 means undef)
    U16 key_len      -> length of key
    U16 val_len      -> length of value
 
 The hash function used is stadtx hash, which uses a 16 byte seed to produce
-a 32 byte state vector.
+a 32 byte state vector used for hashing. The file contains the state vector
+required for hashing and does not include the original seed.
 
 =head2 EXPORT
 
