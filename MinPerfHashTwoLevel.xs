@@ -115,6 +115,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
     struct mph_header *head;
     int fd = open(file, O_RDONLY, 0);
     void *ptr;
+    U32 alignment;
 
     if (error)
         sv_setpvs(error,"");
@@ -132,11 +133,6 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
         if (error)
             sv_setpvf(error,"file '%s' is too small to be a valid PH2L file", file);
         return MPH_MOUNT_ERROR_TOO_SMALL;
-    }
-    if (st.st_size % 16) {
-        if (error)
-            sv_setpvf(error,"file '%s' does not have a size which is a multiple of 16 bytes", file);
-        return MPH_MOUNT_ERROR_BAD_SIZE;
     }
     ptr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED | MPH_MAP_POPULATE, fd, 0);
     if (ptr == MAP_FAILED) {
@@ -157,10 +153,17 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
             sv_setpvf(error,"file '%s' is not a PH2L file", file);
         return MPH_MOUNT_ERROR_BAD_MAGIC;
     }
-    if (head->variant > 2) {
+    if (head->variant > 3) {
         if (error)
             sv_setpvf(error,"unknown version '%d' in '%s'", head->variant, file);
         return MPH_MOUNT_ERROR_BAD_VERSION;
+    }
+    alignment = head->variant < 3 ? sizeof(U64)*2 : sizeof(U64);
+
+    if (st.st_size % alignment) {
+        if (error)
+            sv_setpvf(error,"file '%s' does not have a size which is a multiple of 16 bytes", file);
+        return MPH_MOUNT_ERROR_BAD_SIZE;
     }
     if (
         head->table_ofs < head->state_ofs           ||
@@ -171,24 +174,39 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
     ) {
         if (error)
             sv_setpvf(error,"corrupt header offsets in '%s'", file);
-        return MPH_MOUNT_ERROR_CORRUPT_OFFSETS;
+        return MPH_MOUNT_ERROR_BAD_OFFSETS;
     }
     if (flags & MPH_F_VALIDATE) {
         char *start= ptr;
         char *state_pv= start + head->state_ofs;
         char *str_buf_start= start + head->str_buf_ofs;
         char *str_buf_end= start + st.st_size;
-        U64 table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
-        U64 str_buf_checksum= stadtx_hash_with_state(state_pv, start + head->str_buf_ofs, st.st_size - head->str_buf_ofs );
-        if (head->table_checksum != table_checksum) {
-            if (error)
-                sv_setpvf(error,"table checksum '%016lx' != '%016lx' in file '%s'",table_checksum,head->table_checksum,file);
-            return MPH_MOUNT_ERROR_CORRUPT_TABLE;
-        }
-        if (head->str_buf_checksum != str_buf_checksum) {
-            if (error)
-                sv_setpvf(error,"str buf checksum '%016lx' != '%016lx' in file '%s'",str_buf_checksum,head->str_buf_checksum,file);
-            return MPH_MOUNT_ERROR_CORRUPT_STR_BUF;
+
+        if (head->variant >= 3) {
+            U64 have_file_checksum= stadtx_hash_with_state(state_pv, start, st.st_size - sizeof(U64));
+            U64 want_file_checksum= *((U64 *)(str_buf_end - sizeof(U64)));
+            if (have_file_checksum != want_file_checksum) {
+                if (error)
+                    sv_setpvf(error,"file checksum '%016lx' != '%016lx' in file '%s'",
+                        have_file_checksum,want_file_checksum,file);
+                return MPH_MOUNT_ERROR_CORRUPT_FILE;
+            }
+        } else {
+            U64 str_buf_checksum;
+            U64 table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
+            if (head->table_checksum != table_checksum) {
+                if (error)
+                    sv_setpvf(error,"table checksum '%016lx' != '%016lx' in file '%s'",table_checksum,head->table_checksum,file);
+                return MPH_MOUNT_ERROR_CORRUPT_TABLE;
+            }
+
+            str_buf_checksum= stadtx_hash_with_state(state_pv, start + head->str_buf_ofs,
+                st.st_size - head->str_buf_ofs - (head->variant > 2 ? sizeof(U64) : 0) );
+            if (head->str_buf_checksum != str_buf_checksum) {
+                if (error)
+                    sv_setpvf(error,"str buf checksum '%016lx' != '%016lx' in file '%s'",str_buf_checksum,head->str_buf_checksum,file);
+                return MPH_MOUNT_ERROR_CORRUPT_STR_BUF;
+            }
         }
     }
     return head->variant;
@@ -841,8 +859,8 @@ compute_xs(self_hv)
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::OnDisk
 
 SV *
-packed_xs(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
-        SV* version_sv
+packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
+        U32 variant
         SV* buf_length_sv
         SV* state_sv
         SV* comment_sv
@@ -859,11 +877,16 @@ packed_xs(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     STRLEN state_len;
     char *state_pv= SvPV(state_sv, state_len);
     
-    U32 state_rlen= _roundup(state_len,16);
-    U32 table_rlen= _roundup(sizeof(struct mph_bucket) * bucket_count,16);
-    U32 key_flags_rlen= _roundup((bucket_count * 2 + 7 ) / 8,16);
-    U32 val_flags_rlen= _roundup((bucket_count + 7) / 8,16);
-    U32 str_rlen= _roundup(buf_length + 2 + (SvOK(comment_sv) ? sv_len(comment_sv)+1 : 1),16);
+    U32 alignment= variant < 3 ? 2*sizeof(U64) : sizeof(U64);
+    U32 state_rlen= _roundup(state_len,alignment);
+    U32 table_rlen= _roundup(sizeof(struct mph_bucket) * bucket_count,alignment);
+    U32 key_flags_rlen= _roundup((bucket_count * 2 + 7 ) / 8,alignment);
+    U32 val_flags_rlen= _roundup((bucket_count + 7) / 8,alignment);
+    U32 str_rlen= _roundup( buf_length
+                            + 2
+                            + ( SvOK(comment_sv) ? sv_len(comment_sv) + 1 : 1 )
+                            + ( variant < 3 ? 0 : 2 + 8 ),
+                            alignment );
 
     U32 total_size=
         + header_rlen
@@ -897,7 +920,7 @@ packed_xs(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     head= (struct mph_header *)start;
 
     head->magic_num= 1278363728;
-    head->variant= SvUV(version_sv);
+    head->variant= variant;
     head->num_buckets= bucket_count;
     head->state_ofs= header_rlen;
     head->table_ofs= head->state_ofs + state_rlen;
@@ -947,21 +970,25 @@ packed_xs(version_sv,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
             croak("panic: out of memory? no val_is_utf8_he for %u",i);
         }
     }
-    {
-        U32 actual_size= str_buf_pos - start;
-        U32 r= actual_size % 16;
-        if (r) {
-            U32 add = 16 - r;
-            str_buf_pos += add;
-            actual_size += add;
-        }
-        SvCUR_set(sv_buf, actual_size);
-        SvPOK_on(sv_buf);
-        if (0)
-            warn ("original estimate: %d actual: %d saved:%i\n", total_size, actual_size, (int)(total_size - actual_size));
+    if (variant > 2) {
+        *str_buf_pos =   0; str_buf_pos++;
+        *str_buf_pos = 128; str_buf_pos++;
     }
-    head->table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
-    head->str_buf_checksum= stadtx_hash_with_state(state_pv, str_buf_start, str_buf_pos - str_buf_start);
+    {
+        U32 r= (str_buf_pos - start) % alignment;
+        if (r) {
+            str_buf_pos += (alignment - r);
+        }
+    }
+    if (variant > 2) {
+        *((U64 *)str_buf_pos)= stadtx_hash_with_state(state, start, str_buf_pos - start);
+        str_buf_pos += sizeof(U64);
+    } else {
+        head->table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
+        head->str_buf_checksum= stadtx_hash_with_state(state_pv, str_buf_start, str_buf_pos - str_buf_start);
+    }
+    SvCUR_set(sv_buf, str_buf_pos - start);
+    SvPOK_on(sv_buf);
     RETVAL= sv_buf;
 }
     OUTPUT:
