@@ -3,7 +3,11 @@ lib/Algorithm/MinPerfHashTwoLevel.pm
 lib/Tie/Hash/MinPerfHashTwoLevel/OnDisk.pm
 Makefile.PL
 MANIFEST
+MinPerfHashTwoLevel.bs
+MinPerfHashTwoLevel.c
+MinPerfHashTwoLevel.o
 MinPerfHashTwoLevel.xs
+mph2l.h
 ppport.h
 README
 stadtx_hash.h
@@ -11,6 +15,7 @@ t/Algo_fail.t
 t/Algo_v0.t
 t/Algo_v1.t
 t/Algo_v2.t
+t/Corruption.t
 t/OnDisk.pl
 t/OnDisk.t
 t/OnDisk_v0.t

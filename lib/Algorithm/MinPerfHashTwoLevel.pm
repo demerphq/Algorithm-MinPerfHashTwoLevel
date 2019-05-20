@@ -1,7 +1,7 @@
 package Algorithm::MinPerfHashTwoLevel;
 use strict;
 use warnings;
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 our $DEFAULT_VARIANT = 3;
 
 use Exporter qw(import);
