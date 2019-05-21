@@ -161,7 +161,7 @@ sub get_seed {
 
 sub get_state {
     my $self= shift;
-    return $self->{state} //= seed_state($self->_seed());
+    return $self->{state} ||= seed_state($self->_seed());
 }
 
 sub get_failed_seeds {

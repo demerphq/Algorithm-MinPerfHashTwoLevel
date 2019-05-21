@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Test::More;
+use Test::More qw(no_plan);
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 
@@ -21,7 +21,7 @@ mph2l_make_file("$tmpdir/test_000.mph2l",source_hash=>{1..10},canonical=>1);
 open my $fh,"<", "$tmpdir/test_000.mph2l";
 my $data= do { local $/; <$fh> };
 close $fh;
-$data //= "";
+$data = "" unless defined $data;
 ok($data,sprintf "got data as expected (length: %d)",length($data));
 for my $pos (0..length($data)-1) {
     my $chr= substr($data,$pos,1);
