@@ -81,10 +81,19 @@
 #define MAGIC_DECIMAL 1278363728 /* PH2L */
 #define MAGIC_BIG_ENDIAN_DECIMAL 1346908748
 
+/*
 #ifndef av_top_index
 #define av_top_index(x) av_len(x)
 #endif
+*/
 
+#ifndef MPH_STATIC_INLINE
+#ifdef PERL_STATIC_INLINE
+#define MPH_STATIC_INLINE PERL_STATIC_INLINE
+#else
+#define MPH_STATIC_INLINE static inline
+#endif
+#endif
 
 #define hv_fetch_ent_with_keysv(hv,keysv_idx,lval)                      \
     hv_fetch_ent(hv,MY_CXT.keysv[keysv_idx].sv,lval,MY_CXT.keysv[keysv_idx].hash);

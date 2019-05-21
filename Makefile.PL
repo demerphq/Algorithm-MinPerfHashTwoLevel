@@ -30,6 +30,10 @@ WriteMakefile(
     OPTIMIZE          => '-O3',
 	# Un-comment this if you add C files to link with later:
     # OBJECT            => '$(O_FILES)', # link all the C files too
+    BUILD_REQUIRES      => {
+        "ExtUtils::MakeMaker"   => 7.36,
+        "Test::More"            => 1.302164,
+    },
     META_MERGE => {
         resources => {
             repository => {

@@ -150,8 +150,8 @@ sub make_file {
     delete $opts{deterministic};
 
                     #1234567812345678
-    $opts{seed} //= "MinPerfHash2Levl"
-        if $deterministic;
+    $opts{seed} = "MinPerfHash2Levl"
+        if !defined($opts{seed}) and $deterministic;
 
     my $compute_flags= int($opts{compute_flags}||0);
     $compute_flags += MPH_F_NO_DEDUPE if delete $opts{no_dedupe};
@@ -160,8 +160,8 @@ sub make_file {
     $compute_flags += MPH_F_FILTER_UNDEF
         if delete $opts{filter_undef};
 
-
-    die "Unknown file variant $variant" if $variant > MAX_VARIANT or $variant < 0;
+    die "Unknown file variant $variant"
+        if $variant > MAX_VARIANT or $variant < 0;
 
     die "comment cannot contain null"
         if index($comment,"\0") >= 0;

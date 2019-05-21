@@ -9,8 +9,24 @@ use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 
 use Tie::Hash::MinPerfHashTwoLevel::OnDisk qw(MAX_VARIANT);
 
+sub slurp {
+    my ($file_spec)= @_;
+    open my $fh, "<", $file_spec
+        or die "failed to read '$file_spec': $!";
+    local $/;
+    my $data= <$fh>;
+    return $data;
+}
+
+sub files_eq {
+    my ($lfile,$rfile)= @_;
+    my $left= slurp($lfile);
+    my $right= slurp($rfile);
+    return(defined($left) == defined($right) and defined($right) and $left eq $right);
+}
+
 my $class= 'Tie::Hash::MinPerfHashTwoLevel::OnDisk';
-plan tests => 2 + 420 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT+1);
+plan tests => 2 + 434 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT+1);
 
 my $srand= $ENV{SRAND} ? srand(0+$ENV{SRAND}) : srand();
 ok(defined($srand),"srand as expected: $srand");
@@ -48,13 +64,15 @@ my @source_hashes= (
 );
 
 my $rand_seed= join("",map chr(rand 256), 1..16);
-foreach my $seed ("1234567812345678",undef,$rand_seed) {
+foreach my $seed ("1234567812345678", undef, $rand_seed) {
     foreach my $idx (0 .. $#source_hashes) {
         foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. MAX_VARIANT)) {
             my $seed_str= !defined $seed ? "undef" : unpack("H*",$seed);
             my $source_hash= $source_hashes[$idx];
             my $title= "seed:$seed_str hash:$idx variant:$variant";
-            my $test_file= "$tmpdir/test.$seed_str.$idx.$variant.hash";
+            my $test_fn= "test.$seed_str.$idx.$variant.hash";
+            my $test_file= "$tmpdir/$test_fn";
+            my $corpus_file= (!$seed or $seed ne $rand_seed) ? "t/corpus/$test_fn" : "";
             my $seed_arg= $seed;
             ok(1,"starting testset ($title)");
             #diag "building file $test_file";
@@ -75,6 +93,10 @@ foreach my $seed ("1234567812345678",undef,$rand_seed) {
             is($error,"","should be no error ($title)");
             ok($eval_ok,"make_file should not die ($title)");
             if ($eval_ok) {
+                if ($corpus_file) {
+                    #use File::Copy qw(copy); copy($test_file, $corpus_file);
+                    ok(files_eq($test_file,$corpus_file),"file is as expected");
+                }
                 ok(defined($seed_arg),"seed_arg is defined after make_file() ($title)");
                 is( $got_file,$test_file, "make_file returned as expected ($title)" );
                 my ($got_variant,$got_message)= $class->validate_file(file=>$test_file);

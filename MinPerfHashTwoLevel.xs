@@ -16,7 +16,7 @@
 #include "mph2l.h"
 
 
-PERL_STATIC_INLINE void
+MPH_STATIC_INLINE void
 sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits) {
     U8 *ptr;
     U8 is_utf8;
@@ -43,7 +43,7 @@ sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U
     }
 }
 
-PERL_STATIC_INLINE int
+MPH_STATIC_INLINE int
 lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
 {
     struct mph_bucket *bucket;
@@ -62,7 +62,7 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
     return 1;
 }
 
-PERL_STATIC_INLINE int
+MPH_STATIC_INLINE int
 lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
 {
     U8 *strs= (U8 *)mph + mph->str_buf_ofs;
@@ -1080,6 +1080,8 @@ get_comment(self_hv)
             get_hdr_table_checksum = 9
             get_hdr_str_buf_checksum = 10
             get_state = 11
+    PREINIT:
+        dMY_CXT;
     PROTOTYPE: $
     CODE:
 {
