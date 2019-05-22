@@ -4,9 +4,6 @@ lib/Algorithm/MinPerfHashTwoLevel.pm
 lib/Tie/Hash/MinPerfHashTwoLevel/OnDisk.pm
 Makefile.PL
 MANIFEST
-MinPerfHashTwoLevel.bs
-MinPerfHashTwoLevel.c
-MinPerfHashTwoLevel.o
 MinPerfHashTwoLevel.xs
 mph2l.h
 ppport.h
@@ -74,7 +71,6 @@ t/corpus/test.undef.6.2.hash
 t/corpus/test.undef.6.3.hash
 t/Corruption.t
 t/OnDisk.pl
-t/OnDisk.t
 t/OnDisk_v0.t
 t/OnDisk_v1.t
 t/OnDisk_v2.t
