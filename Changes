@@ -1,5 +1,8 @@
 Revision history for Perl extension Algorithm::MinPerfHashTwoLevel.
 
+0.11  May 22, 2019
+    Fixup MANIFEST. Otherwise identical to 0.11
+
 0.11  May 21, 2019
     Switch to a deterministic seed construction, and avoid use of rand()
     when construction fails. Switch to a full file checksum, and from 16
