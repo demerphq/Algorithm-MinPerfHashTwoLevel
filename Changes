@@ -1,6 +1,10 @@
 Revision history for Perl extension Algorithm::MinPerfHashTwoLevel.
 
-0.11  May 22, 2019
+0.14  May 22, 2019
+    Sigh. Yet another rerelease of the v0.11 changes, missed an upstream commit.
+    There is no version 0.13, that is an unlucky number.
+
+0.12  May 22, 2019
     Fixup MANIFEST. Otherwise identical to 0.11
 
 0.11  May 21, 2019
