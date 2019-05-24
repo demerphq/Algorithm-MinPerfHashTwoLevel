@@ -22,11 +22,16 @@ sub files_eq {
     my ($lfile,$rfile)= @_;
     my $left= slurp($lfile);
     my $right= slurp($rfile);
-    return(defined($left) == defined($right) and defined($right) and $left eq $right);
+    my $ret= (defined($left) == defined($right) and defined($right) and $left eq $right);
+    if (!$ret) {
+        diag (sprintf "'%s' is %s bytes '%s' is %s bytes",
+            $lfile => length($left)//'undef', $rfile => length($right)//'undef');
+    }
+    $ret;
 }
 
 my $class= 'Tie::Hash::MinPerfHashTwoLevel::OnDisk';
-plan tests => 2 + 496 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT+1);
+plan tests => 2 + 930 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT+1);
 
 my $srand= $ENV{SRAND} ? srand(0+$ENV{SRAND}) : srand();
 ok(defined($srand),"srand as expected: $srand");
@@ -44,33 +49,55 @@ my $utf8_can_be_downgraded= "was utf8: \x{DF}";
 utf8::upgrade($utf8_can_be_downgraded);
 my $must_be_utf8= "is utf8: \x{100}"; # this can ONLY be represented as utf8
 my @source_hashes= (
-    {
+    simple => {
         foo => "bar",
         baz => "bop",
         fiz => "shmang",
         plop => "shwoosh",
     },
-    { map { $_ => $_ } 1 .. 50000 },
-    {
+    large => { map { $_ => $_ } 1 .. 50000 },
+    mixed_utf8 => {
         $not_utf8 => $not_utf8,
         $utf8_can_be_downgraded => $utf8_can_be_downgraded,
         $must_be_utf8 => $must_be_utf8,
-        map { chr($_) => chr($_) } 250..260,
+        map { chr($_) => chr($_) } 240 .. 270,
     },
+    pow2_08 =>
     { map { $_ => $_ } 1 .. 8 },
+    pow2_16 =>
     { map { $_ => $_ } 1 .. 16 },
+    pow2_32 =>
     { map { $_ => $_ } 1 .. 32 },
+    pow2_64 =>
     { map { $_ => $_ } 1 .. 64 },
-    { map { chr($_) => chr($_) } 256 .. 260 },
+
+    chr_chr_utf8 =>
+    { map { chr($_) => chr($_) } 256 .. 270 },
+    chr_num_utf8 =>
+    { map { chr($_) => $_ } 256 .. 270 },
+    num_chr_utf8 =>
+    { map { $_ => chr($_) } 256 .. 270 },
+    mix_mix_utf8 =>
+    { map { ($_ % 2 ? chr($_) : $_) => ($_ % 2 ? $_ : chr($_)) } 256 .. 270 },
+    chr_mix_utf8 =>
+    { map { chr($_)                 => ($_ % 2 ? $_ : chr($_)) } 256 .. 270 },
+    num_mix_utf8 =>
+    { map { $_                      => ($_ % 2 ? $_ : chr($_)) } 256 .. 270 },
+    mix_num_utf8 =>
+    { map { ($_ % 2 ? chr($_) : $_) => $_                      } 256 .. 270 },
+    mix_chr_utf8 =>
+    { map { ($_ % 2 ? chr($_) : $_) => chr($_)                 } 256 .. 270 },
+
 );
 
 my $rand_seed= join("",map chr(rand 256), 1..16);
 foreach my $seed ("1234567812345678", undef, $rand_seed) {
-    foreach my $idx (0 .. $#source_hashes) {
+    foreach my $idx (0 .. (@source_hashes/2)-1) {
+        my $name= $source_hashes[$idx*2];
+        my $source_hash= $source_hashes[$idx*2+1];
         foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. MAX_VARIANT)) {
             my $seed_str= !defined $seed ? "undef" : unpack("H*",$seed);
-            my $source_hash= $source_hashes[$idx];
-            my $title= "seed:$seed_str hash:$idx variant:$variant";
+            my $title= "$name seed:$seed_str variant:$variant";
             my $test_fn= "test.$seed_str.$idx.$variant.hash";
             my $test_file= "$tmpdir/$test_fn";
             my $corpus_file= (!$seed or $seed ne $rand_seed) ? "t/corpus/$test_fn" : "";
@@ -100,7 +127,7 @@ foreach my $seed ("1234567812345678", undef, $rand_seed) {
                         File::Copy::copy($test_file,$corpus_file);
                     }
                     #use File::Copy qw(copy); copy($test_file, $corpus_file);
-                    ok(files_eq($test_file,$corpus_file),"file is as expected");
+                    ok(files_eq($test_file,$corpus_file),"file is as expected ($title)");
                 }
                 ok(defined($seed_arg),"seed_arg is defined after make_file() ($title)");
                 is( $got_file,$test_file, "make_file returned as expected ($title)" );
