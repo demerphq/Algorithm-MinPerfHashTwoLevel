@@ -26,7 +26,7 @@ sub files_eq {
 }
 
 my $class= 'Tie::Hash::MinPerfHashTwoLevel::OnDisk';
-plan tests => 2 + 434 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT+1);
+plan tests => 2 + 496 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT+1);
 
 my $srand= $ENV{SRAND} ? srand(0+$ENV{SRAND}) : srand();
 ok(defined($srand),"srand as expected: $srand");
@@ -61,6 +61,7 @@ my @source_hashes= (
     { map { $_ => $_ } 1 .. 16 },
     { map { $_ => $_ } 1 .. 32 },
     { map { $_ => $_ } 1 .. 64 },
+    { map { chr($_) => chr($_) } 256 .. 260 },
 );
 
 my $rand_seed= join("",map chr(rand 256), 1..16);
@@ -94,6 +95,10 @@ foreach my $seed ("1234567812345678", undef, $rand_seed) {
             ok($eval_ok,"make_file should not die ($title)");
             if ($eval_ok) {
                 if ($corpus_file) {
+                    if (!-e $corpus_file and $ENV{CREATE_CORPUS}) {
+                        require File::Copy;
+                        File::Copy::copy($test_file,$corpus_file);
+                    }
                     #use File::Copy qw(copy); copy($test_file, $corpus_file);
                     ok(files_eq($test_file,$corpus_file),"file is as expected");
                 }
