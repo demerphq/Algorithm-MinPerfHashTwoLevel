@@ -15,14 +15,19 @@
 #include <assert.h>
 #include "mph2l.h"
 
+#define MAX_VARIANT 4
 
 MPH_STATIC_INLINE void
-sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits) {
+sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift) {
     U8 *ptr;
     U8 is_utf8;
     if (ofs) {
         ptr= (strs) + (ofs);
-        GETBITS(is_utf8,flags,idx,bits);
+        if (utf8_default) {
+            is_utf8= utf8_default >> utf8_default_shift;
+        } else {
+            GETBITS(is_utf8,flags,idx,bits);
+        }
     } else {
         ptr= 0;
         is_utf8= 0;
@@ -48,16 +53,20 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
 {
     struct mph_bucket *bucket;
     U8 *strs;
+    U8 *mph_u8= (U8*)mph;
+    U64 gf= mph->variant > 3 ? mph->general_flags : 0;
     if (index >= mph->num_buckets) {
         return 0;
     }
     bucket= (struct mph_bucket *)((char *)mph + mph->table_ofs) + index;
     strs= (U8 *)mph + mph->str_buf_ofs;
-    if (key_sv) {
-        sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,((U8*)mph)+mph->key_flags_ofs,2);
-    }
     if (val_sv) {
-        sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
+        sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,mph_u8 + mph->val_flags_ofs,1,
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
+    }
+    if (key_sv) {
+        sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,mph_u8 + mph->key_flags_ofs,2,
+                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT);
     }
     return 1;
 }
@@ -102,7 +111,9 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     got_key_pv= strs + bucket->key_ofs;
     if (bucket->key_len == key_len && memEQ(key_pv,got_key_pv,key_len)) {
         if (val_sv) {
-            sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1);
+            U64 gf= mph->variant > 3 ? mph->general_flags : 0;
+            sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1,
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
         }
         return 1;
     }
@@ -153,7 +164,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
             sv_setpvf(error,"file '%s' is not a PH2L file", file);
         return MPH_MOUNT_ERROR_BAD_MAGIC;
     }
-    if (head->variant > 3) {
+    if (head->variant > MAX_VARIANT) {
         if (error)
             sv_setpvf(error,"unknown version '%d' in '%s'", head->variant, file);
         return MPH_MOUNT_ERROR_BAD_VERSION;
@@ -289,6 +300,8 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
     dMY_CXT;
     HE *he;
     U32 buf_length= 0;
+    U32 ctr;
+
     hv_iterinit(source_hv);
     while (he= hv_iternext(source_hv)) {
         SV *val_sv= HeVAL(he);
@@ -888,15 +901,7 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
                             + ( variant < 3 ? 0 : 2 + 8 ),
                             alignment );
 
-    U32 total_size=
-        + header_rlen
-        + state_rlen
-        + table_rlen
-        + key_flags_rlen
-        + val_flags_rlen
-        + str_rlen
-    ;
-
+    U32 total_size;
     HV *str_ofs_hv= (HV *)sv_2mortal((SV*)newHV());
     SV *sv_buf;
     char *start;
@@ -911,6 +916,46 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     U32 i;
     STRLEN pv_len;
     char *pv;
+    U32 key_is_utf8_count[3]={0,0,0};
+    U32 val_is_utf8_count[2]={0,0};
+    U32 used_flags;
+    U32 the_flag;
+    IV key_is_utf8_generic=-1;
+    IV val_is_utf8_generic=-1;
+    if (variant > 3) {
+        for (i= 0; i < bucket_count; i++) {
+            SV **got= av_fetch(buckets_av,i,0);
+            HV *hv= (HV *)SvRV(*got);
+            HE *key_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,0);
+            HE *val_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,0);
+            key_is_utf8_count[SvUV(HeVAL(key_is_utf8_he))]++;
+            val_is_utf8_count[SvUV(HeVAL(val_is_utf8_he))]++;
+        }
+        used_flags= 0;
+        if (key_is_utf8_count[0]) { the_flag= 0; used_flags++; }
+        if (key_is_utf8_count[1]) { the_flag= 1; used_flags++; }
+        if (key_is_utf8_count[2]) { the_flag= 2; used_flags++; }
+        if (used_flags == 1) {
+            key_is_utf8_generic= the_flag;
+            key_flags_rlen= 0;
+        }
+        used_flags= 0;
+        if (val_is_utf8_count[0]) { the_flag= 0; used_flags++; }
+        if (val_is_utf8_count[1]) { the_flag= 1; used_flags++; }
+        if (used_flags == 1) {
+            val_is_utf8_generic= the_flag;
+            val_flags_rlen= 0;
+        }
+    }
+
+    total_size=
+        + header_rlen
+        + state_rlen
+        + table_rlen
+        + key_flags_rlen
+        + val_flags_rlen
+        + str_rlen
+    ;
     
     sv_buf= newSV(total_size);
     SvPOK_on(sv_buf);
@@ -927,6 +972,12 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     head->key_flags_ofs= head->table_ofs + table_rlen;
     head->val_flags_ofs= head->key_flags_ofs + key_flags_rlen;
     head->str_buf_ofs= head->val_flags_ofs + val_flags_rlen;
+    if (variant > 3) {
+        if (val_is_utf8_generic >= 0)
+            head->general_flags |= (MPH_VALS_ARE_SAME_UTF8NESS_FLAG_BIT | (val_is_utf8_generic << MPH_VALS_ARE_SAME_UTF8NESS_SHIFT));
+        if (key_is_utf8_generic >= 0)
+            head->general_flags |= (MPH_KEYS_ARE_SAME_UTF8NESS_FLAG_BIT | (key_is_utf8_generic << MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT));
+    }
 
     state= start + head->state_ofs;
     table= (struct mph_bucket *)(start + head->table_ofs);
@@ -945,9 +996,7 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         SV **got= av_fetch(buckets_av,i,0);
         HV *hv= (HV *)SvRV(*got);
         HE *key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
-        HE *key_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,0);
         HE *val_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED,0);
-        HE *val_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,0);
         HE *xor_val_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_XOR_VAL,0);
 
         if (xor_val_he) {
@@ -957,17 +1006,23 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         }
         SETOFS(i,key_normalized_he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
         SETOFS(i,val_normalized_he,table,val_ofs,val_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
-        if (key_is_utf8_he) {
-            UV u= SvUV(HeVAL(key_is_utf8_he));
-            SETBITS(u,key_flags,i,2);
-        } else {
-            croak("panic: out of memory? no key_is_utf8_he for %u",i);
+        if ( key_is_utf8_generic < 0) {
+            HE *key_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,0);
+            if (key_is_utf8_he) {
+                UV u= SvUV(HeVAL(key_is_utf8_he));
+                SETBITS(u,key_flags,i,2);
+            } else {
+                croak("panic: out of memory? no key_is_utf8_he for %u",i);
+            }
         }
-        if (val_is_utf8_he) {
-            UV u= SvUV(HeVAL(val_is_utf8_he));
-            SETBITS(u,val_flags,i,1);
-        } else {
-            croak("panic: out of memory? no val_is_utf8_he for %u",i);
+        if ( val_is_utf8_generic < 0 ) {
+            HE *val_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,0);
+            if (val_is_utf8_he) {
+                UV u= SvUV(HeVAL(val_is_utf8_he));
+                SETBITS(u,val_flags,i,1);
+            } else {
+                croak("panic: out of memory? no val_is_utf8_he for %u",i);
+            }
         }
     }
     if (variant > 2) {

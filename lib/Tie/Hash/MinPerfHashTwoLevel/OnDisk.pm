@@ -160,7 +160,7 @@ sub make_file {
     $compute_flags += MPH_F_FILTER_UNDEF
         if delete $opts{filter_undef};
 
-    die "Unknown file variant $variant"
+    die "Unknown file variant %d (max %d)", $variant, MAX_VARIANT
         if $variant > MAX_VARIANT or $variant < 0;
 
     die "comment cannot contain null"

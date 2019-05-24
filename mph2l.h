@@ -81,6 +81,13 @@
 #define MAGIC_DECIMAL 1278363728 /* PH2L */
 #define MAGIC_BIG_ENDIAN_DECIMAL 1346908748
 
+#define MPH_VALS_ARE_SAME_UTF8NESS_FLAG_BIT   1           /* 0000 0001 */
+#define MPH_VALS_ARE_SAME_UTF8NESS_MASK       3           /* 0000 0011 */
+#define MPH_VALS_ARE_SAME_UTF8NESS_SHIFT      1           /*  000 0001 */
+#define MPH_KEYS_ARE_SAME_UTF8NESS_FLAG_BIT   4           /* 0000 0100 */
+#define MPH_KEYS_ARE_SAME_UTF8NESS_MASK       (7 << 2)    /* 0001 1100 */
+#define MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT      3           /*    0 0011 */
+
 /*
 #ifndef av_top_index
 #define av_top_index(x) av_len(x)
@@ -170,8 +177,13 @@ struct mph_header {
     U32 val_flags_ofs;
     U32 str_buf_ofs;
 
-    U64 table_checksum;
-    U64 str_buf_checksum;
+    union {
+        U64 table_checksum;
+        U64 general_flags;
+    };
+    union {
+        U64 str_buf_checksum;
+    };
 };
 
 struct mph_bucket {

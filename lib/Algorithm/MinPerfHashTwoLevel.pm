@@ -2,7 +2,7 @@ package Algorithm::MinPerfHashTwoLevel;
 use strict;
 use warnings;
 our $VERSION = '0.14';
-our $DEFAULT_VARIANT = 3;
+our $DEFAULT_VARIANT = 4;
 
 use Exporter qw(import);
 use Carp ();
@@ -15,7 +15,7 @@ BEGIN {
         MPH_F_DETERMINISTIC         =>  (1<<1),
        #MPH_F_NO_DEDUPE             =>  (1<<2),
        #MPH_F_VALIDATE              =>  (1<<3),
-        MAX_VARIANT                 =>  3,
+        MAX_VARIANT                 =>  4,
         STADTX_HASH_SEED_BYTES      => 16,
         STADTX_HASH_STATE_BYTES     => 32,
     );
