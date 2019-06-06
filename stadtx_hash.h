@@ -121,7 +121,7 @@
 } STMT_END
 
 
-STADTX_STATIC_INLINE void stadtx_seed_state (
+STADTX_STATIC_INLINE void x_stadtx_seed_state (
     const U8 *seed_ch,
     U8 *state_ch
 ) {
@@ -171,7 +171,7 @@ STADTX_STATIC_INLINE void stadtx_seed_state (
 #define STADTX_K4_U32 0x91cb27e5
 #define STADTX_K5_U32 0xc1a269c1
 
-STADTX_STATIC_INLINE U64 stadtx_hash_with_state(
+STADTX_STATIC_INLINE U64 x_stadtx_hash_with_state(
     const U8 *state_ch,
     const U8 *key,
     const STRLEN key_len
@@ -233,11 +233,11 @@ STADTX_STATIC_INLINE U64 stadtx_hash_with_state(
 
         do {
             v0 += (U64)U8TO64_LE(key+ 0) * STADTX_K2_U32; v0= ROTL64(v0,57) ^ v3;
-            v1 += (U64)U8TO64_LE(key+ 8) * STADTX_K3_U32; v1= ROTL64(v1,63) ^ v2;
-            v2 += (U64)U8TO64_LE(key+16) * STADTX_K4_U32; v2= ROTR64(v2,47) + v0;
-            v3 += (U64)U8TO64_LE(key+24) * STADTX_K5_U32; v3= ROTR64(v3,11) - v1;
-            key += 32;
-            len -= 32;
+            v1 += (U64)U8TO64_LE(key+ 0) * STADTX_K3_U32; v1= ROTL64(v1,63) ^ v2;
+            v2 += (U64)U8TO64_LE(key+ 8) * STADTX_K4_U32; v2= ROTR64(v2,47) + v0;
+            v3 += (U64)U8TO64_LE(key+ 8) * STADTX_K5_U32; v3= ROTR64(v3,11) - v1;
+            key += 16;
+            len -= 16;
         } while ( len >= 32 );
 
         switch ( len >> 3 ) {
@@ -291,18 +291,18 @@ STADTX_STATIC_INLINE U64 stadtx_hash_with_state(
         v3 = ROTR64(v3,59);
         v0 = ROTR64(v0, 1) - v1;
 
-        return v0 ^ v1 ^ v2 ^ v3;
+        return v0 ^ v3;
     }
 }
 
-STADTX_STATIC_INLINE U64 stadtx_hash(
+STADTX_STATIC_INLINE U64 x_stadtx_hash(
     const U8 *seed_ch,
     const U8 *key,
     const STRLEN key_len
 ) {
     U64 state[4];
-    stadtx_seed_state(seed_ch,(U8*)state);
-    return stadtx_hash_with_state((U8*)state,key,key_len);
+    x_stadtx_seed_state(seed_ch,(U8*)state);
+    return x_stadtx_hash_with_state((U8*)state,key,key_len);
 }
 
 #endif

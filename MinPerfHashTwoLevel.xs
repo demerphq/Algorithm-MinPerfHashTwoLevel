@@ -6,7 +6,6 @@
 #define NEED_newRV_noinc
 #define NEED_sv_2pv_flags
 #include "ppport.h"
-#include "stadtx_hash.h"
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <fcntl.h>
@@ -14,6 +13,7 @@
 #include <sys/stat.h>
 #include <assert.h>
 #include "mph2l.h"
+#include "mph_siphash.h"
 
 #define MAX_VARIANT 4
 
@@ -93,7 +93,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
         key_sv= tmp;
     }
     key_pv= SvPV(key_sv,key_len);
-    h0= stadtx_hash_with_state(state,key_pv,key_len);
+    h0= mph_hash_with_state(state,key_pv,key_len);
     h1= h0 >> 32;
     index= h1 % mph->num_buckets;
 
@@ -194,7 +194,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
         char *str_buf_end= start + st.st_size;
 
         if (head->variant >= 3) {
-            U64 have_file_checksum= stadtx_hash_with_state(state_pv, start, st.st_size - sizeof(U64));
+            U64 have_file_checksum= mph_hash_with_state(state_pv, start, st.st_size - sizeof(U64));
             U64 want_file_checksum= *((U64 *)(str_buf_end - sizeof(U64)));
             if (have_file_checksum != want_file_checksum) {
                 if (error)
@@ -204,14 +204,14 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
             }
         } else {
             U64 str_buf_checksum;
-            U64 table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
+            U64 table_checksum= mph_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
             if (head->table_checksum != table_checksum) {
                 if (error)
                     sv_setpvf(error,"table checksum '%016lx' != '%016lx' in file '%s'",table_checksum,head->table_checksum,file);
                 return MPH_MOUNT_ERROR_CORRUPT_TABLE;
             }
 
-            str_buf_checksum= stadtx_hash_with_state(state_pv, start + head->str_buf_ofs,
+            str_buf_checksum= mph_hash_with_state(state_pv, start + head->str_buf_ofs,
                 st.st_size - head->str_buf_ofs - (head->variant > 2 ? sizeof(U64) : 0) );
             if (head->str_buf_checksum != str_buf_checksum) {
                 if (error)
@@ -341,10 +341,10 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
         buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
 
         key_pv= (U8 *)SvPV(key_normalized_sv,key_len);
-        h0= stadtx_hash_with_state(state_pv,key_pv,key_len);
+        h0= mph_hash_with_state(state_pv,key_pv,key_len);
 
         hv_store_ent_with_keysv(hv,MPH_KEYSV_H0,             newSVuv(h0));
-
+        warn("hash:%016lx s:%.100s\n", h0, SvPV_nolen(key_normalized_sv));
     }
     if (buf_length_sv)
         sv_setuv(buf_length_sv, buf_length);
@@ -522,6 +522,9 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, SV *idx1_packed_sv, AV
             U32 *h2_ptr= h2_start;
             U32 *idx2_ptr= idx2_start;
             if (xor_val == max_xor_val) {
+                warn("failed to resolve collision idx1: %d\n",idx1);
+                while (h2_ptr < h2_end)
+                    warn("hash: %016x\n", *h2_ptr++);
                 return idx1 + 1;
             } else {
                 xor_val++;
@@ -565,8 +568,10 @@ place_singletons(pTHX_ U32 bucket_count, SV *idx1_packed_sv, AV *keybuckets_av, 
         while (singleton_pos < bucket_count && is_used[singleton_pos]) {
             singleton_pos++;
         }
-        if (singleton_pos == bucket_count)
+        if (singleton_pos == bucket_count) {
+            warn("failed to place singleton! idx: %d",idx1);
             return idx1 + 1;
+        }
 
         xor_val= (U32)(-singleton_pos-1);
         got= av_fetch(keybuckets_av, idx1, 0);
@@ -684,7 +689,7 @@ hash_with_state(str_sv,state_sv)
     if (state_len != STADTX_STATE_BYTES) {
         croak("Error: state vector must be at exactly %d bytes",(int)STADTX_SEED_BYTES);
     }
-    RETVAL= stadtx_hash_with_state(state_pv,str_pv,str_len);
+    RETVAL= mph_hash_with_state(state_pv,str_pv,str_len);
 }
     OUTPUT:
         RETVAL
@@ -737,7 +742,7 @@ seed_state(base_seed_sv)
     SvCUR_set(RETVAL,STADTX_STATE_BYTES);
     SvPOK_on(RETVAL);
     state_pv= (U8 *)SvPV(RETVAL,state_len);
-    stadtx_seed_state(seed_pv,state_pv);
+    mph_seed_state(seed_pv,state_pv);
 }
     OUTPUT:
         RETVAL
@@ -1036,11 +1041,11 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         }
     }
     if (variant > 2) {
-        *((U64 *)str_buf_pos)= stadtx_hash_with_state(state, start, str_buf_pos - start);
+        *((U64 *)str_buf_pos)= mph_hash_with_state(state, start, str_buf_pos - start);
         str_buf_pos += sizeof(U64);
     } else {
-        head->table_checksum= stadtx_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
-        head->str_buf_checksum= stadtx_hash_with_state(state_pv, str_buf_start, str_buf_pos - str_buf_start);
+        head->table_checksum= mph_hash_with_state(state_pv, start + head->table_ofs, head->str_buf_ofs - head->table_ofs);
+        head->str_buf_checksum= mph_hash_with_state(state_pv, str_buf_start, str_buf_pos - str_buf_start);
     }
     SvCUR_set(sv_buf, str_buf_pos - start);
     SvPOK_on(sv_buf);
