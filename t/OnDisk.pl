@@ -7,7 +7,7 @@ use Test::More;
 use File::Temp;
 use Data::Dumper; $Data::Dumper::Sortkeys=1; $Data::Dumper::Useqq=1;
 
-use Tie::Hash::MinPerfHashTwoLevel::OnDisk qw(MAX_VARIANT);
+use Tie::Hash::MinPerfHashTwoLevel::OnDisk qw(MAX_VARIANT MIN_VARIANT);
 
 sub slurp {
     my ($file_spec)= @_;
@@ -35,7 +35,7 @@ sub files_eq {
 }
 
 my $class= 'Tie::Hash::MinPerfHashTwoLevel::OnDisk';
-plan tests => 2 + 1830 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT+1);
+plan tests => 2 + 1830 * (defined($ENV{VARIANT}) ? 1 : MAX_VARIANT - MIN_VARIANT + 1);
 
 my $srand= $ENV{SRAND} ? srand(0+$ENV{SRAND}) : srand();
 ok(defined($srand),"srand as expected: $srand");
@@ -99,7 +99,7 @@ foreach my $seed ("1234567812345678", undef, $rand_seed) {
     foreach my $idx (0 .. (@source_hashes/2)-1) {
         my $name= $source_hashes[$idx*2];
         my $source_hash= $source_hashes[$idx*2+1];
-        foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (0 .. MAX_VARIANT)) {
+        foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (MIN_VARIANT .. MAX_VARIANT)) {
             foreach my $canonical (0 .. 1) {
                 my $seed_str= !defined $seed ? "undef" : unpack("H*",$seed);
                 my $title= "$name seed:$seed_str variant:$variant";

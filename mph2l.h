@@ -1,24 +1,11 @@
-#ifndef _ROTL_SIZED
-#define _ROTL_SIZED(x,r,s) ( ((x) << (r)) | ((x) >> ((s) - (r))) )
+#ifndef MPH_SEED_BYTES
+#define MPH_SEED_BYTES (sizeof(U64) * 2)
 #endif
-#ifndef ROTL64
-#define ROTL64(x,r) _ROTL_SIZED(x,r,64)
-#endif
-#ifndef _ROTR_SIZED
-#define _ROTR_SIZED(x,r,s) ( ((x) << ((s) - (r))) | ((x) >> (r)) )
-#endif
-#ifndef ROTR64
-#define ROTR64(x,r) _ROTR_SIZED(x,r,64)
+#ifndef MPH_STATE_BYTES
+#define MPH_STATE_BYTES (sizeof(U64) * 4)
 #endif
 
 #define U64 U64TYPE
-
-#ifndef STADTX_SEED_BYTES
-#define STADTX_SEED_BYTES (sizeof(U64) * 2)
-#endif
-#ifndef STADTX_STATE_BYTES
-#define STADTX_STATE_BYTES (sizeof(U64) * 4)
-#endif
 
 #ifndef MPH_MAP_POPULATE
 #ifdef MAP_POPULATE
@@ -138,15 +125,13 @@ STMT_START {                                                            \
     if (got_he) sv_setuv(HeVAL(got_he),uv);                             \
 } STMT_END
 
-#define HASH2INDEX(x,h2,xor_val,bucket_count,variant) STMT_START {      \
+#define HASH2INDEX(x,h2,xor_val,bucket_count) STMT_START {      \
         x= h2 ^ xor_val;                                                \
-        if (variant > 1) {                                              \
         /* see: https://stackoverflow.com/a/12996028                    \
          * but we could use any similar integer hash function. */       \
-            x = ((x >> 16) ^ x) * 0x45d9f3b;                            \
-            x = ((x >> 16) ^ x) * 0x45d9f3b;                            \
-            x = ((x >> 16) ^ x);                                        \
-        }                                                               \
+        x = ((x >> 16) ^ x) * 0x45d9f3b;                                \
+        x = ((x >> 16) ^ x) * 0x45d9f3b;                                \
+        x = ((x >> 16) ^ x);                                            \
         x %= bucket_count;                                              \
 } STMT_END
 
