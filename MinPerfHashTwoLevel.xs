@@ -16,8 +16,6 @@
 #include "mph_hv_macro.h"
 #include "mph_siphash.h"
 
-#define MAX_VARIANT 5
-#define MIN_VARIANT 5
 
 MPH_STATIC_INLINE void
 sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift) {
@@ -60,7 +58,11 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
     if (index >= mph->num_buckets) {
         return 0;
     }
-    bucket= (struct mph_bucket *)((char *)mph + mph->table_ofs) + index;
+    bucket= (struct mph_bucket *)
+            ((char *)mph + mph->table_ofs + (index * (mph->variant == 5
+                                                      ? sizeof(struct mph_bucket)
+                                                      : sizeof(struct mph_sorted_bucket))));
+
     strs= (U8 *)mph + mph->str_buf_ofs;
     if (val_sv) {
         sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,mph_u8 + mph->val_flags_ofs,1,
@@ -77,8 +79,9 @@ MPH_STATIC_INLINE int
 lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
 {
     U8 *strs= (U8 *)mph + mph->str_buf_ofs;
-    struct mph_bucket *buckets= (struct mph_bucket *) ((char *)mph + mph->table_ofs);
-    struct mph_bucket *bucket;
+    char *table= ((char *)mph + mph->table_ofs);
+    U32 bucket_size= (mph->variant == 5) ? sizeof(struct mph_bucket) : sizeof(struct mph_sorted_bucket);
+    struct mph_sorted_bucket *bucket;
     U8 *state= (char *)mph + mph->state_ofs;
     STRLEN key_len;
     U8 *key_pv;
@@ -99,7 +102,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     h1= h0 >> 32;
     index= h1 % mph->num_buckets;
 
-    bucket= buckets + index;
+    bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
     if (!bucket->xor_val)
         return 0;
     
@@ -109,12 +112,19 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     } else {
         HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets);
     }
-    bucket= buckets + index;
+    bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
+
+    if (mph->variant == 6) {
+        index= bucket->sort_index;
+        bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
+    }
+
     got_key_pv= strs + bucket->key_ofs;
     if (bucket->key_len == key_len && memEQ(key_pv,got_key_pv,key_len)) {
         if (val_sv) {
             U64 gf= mph->general_flags;
-            sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,((U8*)mph)+mph->val_flags_ofs,1,
+            sv_set_from_bucket(aTHX_ val_sv, strs, bucket->val_ofs, bucket->val_len, index,
+                                 ((U8*)mph)+mph->val_flags_ofs, 1,
                                  gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
         }
         return 1;
@@ -173,7 +183,8 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
     }
     if (head->variant > MAX_VARIANT) {
         if (error)
-            sv_setpvf(error,"unknown version '%d' in '%s'", head->variant, file);
+            sv_setpvf(error,"unknown version '%d' in '%s', this variant only supports up to version %d",
+                head->variant, file, MAX_VARIANT);
         return MPH_MOUNT_ERROR_BAD_VERSION;
     }
     alignment = sizeof(U64);
@@ -261,14 +272,14 @@ START_MY_CXT
 I32
 _compare(pTHX_ SV *a, SV *b) {
     dMY_CXT;
-    HE *a_he= hv_fetch_ent_with_keysv((HV*)SvRV(a),MPH_KEYSV_KEY_NORMALIZED,0);
-    HE *b_he= hv_fetch_ent_with_keysv((HV*)SvRV(b),MPH_KEYSV_KEY_NORMALIZED,0);
+    HE *a_he= hv_fetch_ent_with_keysv((HV*)SvRV(a),MPH_KEYSV_KEY,0);
+    HE *b_he= hv_fetch_ent_with_keysv((HV*)SvRV(b),MPH_KEYSV_KEY,0);
 
     return sv_cmp(HeVAL(a_he),HeVAL(b_he));
 }
 
 U32
-normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *buf_length_sv, char *state_pv) {
+normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *buf_length_sv, char *state_pv, U32 variant) {
     dMY_CXT;
     HE *he;
     U32 buf_length= 0;
@@ -287,6 +298,7 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
         U8 *key_pv;
         STRLEN key_len;
         U64 h0;
+        SV *sort_index_sv;
 
         if (!val_sv) croak("panic: no sv for value?");
         if (!SvOK(val_sv) && (compute_flags & MPH_F_FILTER_UNDEF)) continue;
@@ -322,6 +334,31 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
 
     /* we now know how many keys there are, and what the max_xor_val should be */
     return av_top_index(keys_av)+1;
+}
+
+void
+add_sort_index(pTHX_ AV *keys_av) {
+    IV idx;
+    for (idx= av_top_index(keys_av); idx >= 0; idx--) {
+        SV **got_hvref= av_fetch(keys_av,idx,0);
+        HV *hv;
+        HE *got_he;
+        SV *got_sv;
+
+        got_hvref= av_fetch(keys_av,idx,0);
+        if (!got_hvref)
+            croak("no HV in array in add_sort_index?!");
+
+        hv= (HV *)SvRV(*got_hvref);
+        got_he= hv_fetch_ent_with_keysv(hv, MPH_KEYSV_SORT_INDEX, 1);
+        if (!got_he)
+            croak("no HE in HV in add_sort_index?!");
+        got_sv= HeVAL(got_he);
+
+        if (!got_sv)
+            croak("no sv in HE?");
+        sv_setuv(got_sv, idx);
+    }
 }
 
 void
@@ -594,7 +631,7 @@ solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_lengt
 
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
 
-#define SETOFS(i,he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv)    \
+#define SETOFS(i,he,row,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv)    \
 STMT_START {                                                                \
         if (he) {                                                           \
             SV *sv= HeVAL(he);                                              \
@@ -611,26 +648,26 @@ STMT_START {                                                                \
                         croak("panic: out of memory getting str ofs for " #he "for %u",i);  \
                 }                                                           \
                 if (ofs_sv && SvOK(ofs_sv)){                                \
-                    table[i].key_ofs= SvUV(ofs_sv);                         \
-                    table[i].key_len= sv_len(sv);                           \
+                    row->key_ofs= SvUV(ofs_sv);                             \
+                    row->key_len= sv_len(sv);                               \
                 } else {                                                    \
                     pv= SvPV(sv,pv_len);                                    \
-                    table[i].key_len= pv_len;                               \
+                    row->key_len= pv_len;                                   \
                     if (pv_len) {                                           \
-                        table[i].key_ofs= str_buf_pos - str_buf_start;      \
+                        row->key_ofs= str_buf_pos - str_buf_start;          \
                         if (str_buf_pos + pv_len > str_buf_end)             \
                             croak("panic: string buffer too small in SETOFS, something went horribly wrong."); \
                         Copy(pv,str_buf_pos,pv_len,char);                   \
                         str_buf_pos += pv_len;                              \
                     } else {                                                \
-                        table[i].key_ofs= 1;                                \
+                        row->key_ofs= 1;                                    \
                     }                                                       \
                     if (ofs_sv)                                             \
-                        sv_setuv(ofs_sv,table[i].key_ofs);                  \
+                        sv_setuv(ofs_sv,row->key_ofs);                      \
                 }                                                           \
             } else {                                                        \
-                table[i].key_ofs= 0;                                        \
-                table[i].key_len= 0;                                        \
+                row->key_ofs= 0;                                            \
+                row->key_len= 0;                                            \
             }                                                               \
         } else {                                                            \
             croak("no " #he " for %u",i);                                   \
@@ -811,14 +848,17 @@ compute_xs(self_hv)
 
     /**** build an array of hashes in keys_av based on the normalized contents of source_hv */
     keys_av= (AV *)sv_2mortal((SV*)newAV());
-    bucket_count= normalize_source_hash(aTHX_ source_hv, keys_av, compute_flags, buf_length_sv, state_pv);
+    bucket_count= normalize_source_hash(aTHX_ source_hv, keys_av, compute_flags, buf_length_sv, state_pv, variant);
     max_xor_val= INT32_MAX;
 
     /* if the caller wants deterministic results we sort the keys_av
      * before we compute collisions - depending on the order we process
      * the keys we might resolve the collisions differently */
-    if (compute_flags & MPH_F_DETERMINISTIC)
+    if ((compute_flags & MPH_F_DETERMINISTIC) || variant == 6) {
         sortsv(AvARRAY(keys_av),bucket_count,_compare);
+        if (variant == 6)
+            add_sort_index(aTHX_ keys_av);
+    }
 
     /**** find the collisions from the data we just computed, build an AoAoH and AoS of the
      **** collision data */
@@ -868,8 +908,9 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     
     U32 alignment= sizeof(U64);
     U32 state_rlen= _roundup(state_len,alignment);
-    U32 table_rlen= _roundup(sizeof(struct mph_bucket) * bucket_count,alignment);
-    U32 key_flags_rlen= _roundup((bucket_count * 2 + 7 ) / 8,alignment);
+    U32 bucket_size= variant == 5 ? sizeof(struct mph_bucket) : sizeof(struct mph_sorted_bucket);
+    U32 table_rlen= _roundup(bucket_size * bucket_count, alignment);
+    U32 key_flags_rlen= _roundup((bucket_count * 2 + 7 ) / 8, alignment);
     U32 val_flags_rlen= _roundup((bucket_count + 7) / 8,alignment);
     U32 str_rlen= _roundup( buf_length
                             + 2
@@ -883,7 +924,6 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     char *start;
     struct mph_header *head;
     char *state;
-    struct mph_bucket *table;
     char *key_flags;
     char *val_flags;
     char *str_buf_start;
@@ -898,6 +938,7 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     U32 the_flag;
     IV key_is_utf8_generic=-1;
     IV val_is_utf8_generic=-1;
+    char *table;
 
     for (i= 0; i < bucket_count; i++) {
         SV **got= av_fetch(buckets_av,i,0);
@@ -954,7 +995,8 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         head->general_flags |= (MPH_KEYS_ARE_SAME_UTF8NESS_FLAG_BIT | (key_is_utf8_generic << MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT));
 
     state= start + head->state_ofs;
-    table= (struct mph_bucket *)(start + head->table_ofs);
+    table= start + head->table_ofs;
+
     key_flags= start + head->key_flags_ofs;
     val_flags= start + head->val_flags_ofs;
     str_buf_start= start + head->str_buf_ofs;
@@ -972,19 +1014,28 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         HE *key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
         HE *val_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED,0);
         HE *xor_val_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_XOR_VAL,0);
+        HE *sort_index_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_SORT_INDEX,0);
+        U32 sort_index= sort_index_he ? SvUV(HeVAL(sort_index_he)) : i;
+
+        struct mph_sorted_bucket *row_i= (struct mph_sorted_bucket *)(table + (i * bucket_size));
+        struct mph_sorted_bucket *row_s= (struct mph_sorted_bucket *)(table + (sort_index * bucket_size));
 
         if (xor_val_he) {
-            table[i].xor_val= SvUV(HeVAL(xor_val_he));
+            row_i->xor_val= SvUV(HeVAL(xor_val_he));
         } else {
-            table[i].xor_val= 0;
+            row_i->xor_val= 0;
         }
-        SETOFS(i,key_normalized_he,table,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
-        SETOFS(i,val_normalized_he,table,val_ofs,val_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
+        if (variant == 6)
+            row_i->sort_index= sort_index;
+
+        SETOFS(sort_index,key_normalized_he,row_s,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
+        SETOFS(sort_index,val_normalized_he,row_s,val_ofs,val_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
+
         if ( key_is_utf8_generic < 0) {
             HE *key_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,0);
             if (key_is_utf8_he) {
                 UV u= SvUV(HeVAL(key_is_utf8_he));
-                SETBITS(u,key_flags,i,2);
+                SETBITS(u,key_flags,sort_index,2);
             } else {
                 croak("panic: out of memory? no key_is_utf8_he for %u",i);
             }
@@ -993,7 +1044,7 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
             HE *val_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,0);
             if (val_is_utf8_he) {
                 UV u= SvUV(HeVAL(val_is_utf8_he));
-                SETBITS(u,val_flags,i,1);
+                SETBITS(u,val_flags,sort_index,1);
             } else {
                 croak("panic: out of memory? no val_is_utf8_he for %u",i);
             }

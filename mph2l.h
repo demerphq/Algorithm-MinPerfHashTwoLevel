@@ -25,16 +25,17 @@
 #define MPH_KEYSV_VAL               7
 #define MPH_KEYSV_VAL_NORMALIZED    8
 #define MPH_KEYSV_VAL_IS_UTF8       9
+#define MPH_KEYSV_SORT_INDEX        10
 
-#define MPH_KEYSV_VARIANT           10
-#define MPH_KEYSV_COMPUTE_FLAGS     11
-#define MPH_KEYSV_STATE             12
-#define MPH_KEYSV_SOURCE_HASH       13
-#define MPH_KEYSV_BUF_LENGTH        14
-#define MPH_KEYSV_BUCKETS           15
-#define MPH_KEYSV_MOUNT             16
+#define MPH_KEYSV_VARIANT           11
+#define MPH_KEYSV_COMPUTE_FLAGS     12
+#define MPH_KEYSV_STATE             13
+#define MPH_KEYSV_SOURCE_HASH       14
+#define MPH_KEYSV_BUF_LENGTH        15
+#define MPH_KEYSV_BUCKETS           16
+#define MPH_KEYSV_MOUNT             17
 
-#define COUNT_MPH_KEYSV 17
+#define COUNT_MPH_KEYSV 18
 
 #define MPH_INIT_KEYSV(idx, str) STMT_START {                           \
     MY_CXT.keysv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
@@ -53,6 +54,7 @@
     MPH_INIT_KEYSV(MPH_KEYSV_VAL,"val");                        \
     MPH_INIT_KEYSV(MPH_KEYSV_VAL_NORMALIZED,"val_normalized");  \
     MPH_INIT_KEYSV(MPH_KEYSV_VAL_IS_UTF8,"val_is_utf8");        \
+    MPH_INIT_KEYSV(MPH_KEYSV_SORT_INDEX,"sort_index");          \
                                                                 \
     MPH_INIT_KEYSV(MPH_KEYSV_VARIANT,"variant");                \
     MPH_INIT_KEYSV(MPH_KEYSV_COMPUTE_FLAGS,"compute_flags");    \
@@ -157,6 +159,9 @@ STMT_START {                                                            \
     (flags)[bytepos] |= ((v & bitmask) << shift);           \
 } STMT_END
 
+#define MAX_VARIANT 6
+#define MIN_VARIANT 5
+
 typedef struct {
     SV *sv;
     U32 hash;
@@ -186,16 +191,25 @@ struct mph_header {
     };
 };
 
+#define BUCKET_FIELDS   \
+    union {             \
+        U32 xor_val;    \
+        I32 index;      \
+    };                  \
+    U32 key_ofs;        \
+    U32 val_ofs;        \
+    U16 key_len;        \
+    U16 val_len
+
 struct mph_bucket {
-    union {
-        U32 xor_val;
-        I32 index;
-    };
-    U32 key_ofs;
-    U32 val_ofs;
-    U16 key_len;
-    U16 val_len;
+    BUCKET_FIELDS;
 };
+
+struct mph_sorted_bucket {
+    BUCKET_FIELDS;
+    U32 sort_index;
+};
+
 
 struct mph_obj {
     size_t bytes;

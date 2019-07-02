@@ -15,7 +15,7 @@ BEGIN {
         MPH_F_DETERMINISTIC         =>  (1<<1),
        #MPH_F_NO_DEDUPE             =>  (1<<2),
        #MPH_F_VALIDATE              =>  (1<<3),
-        MAX_VARIANT                 =>  5,
+        MAX_VARIANT                 =>  6,
         MIN_VARIANT                 =>  5,
         STADTX_HASH_SEED_BYTES      => 16,
         STADTX_HASH_STATE_BYTES     => 32,

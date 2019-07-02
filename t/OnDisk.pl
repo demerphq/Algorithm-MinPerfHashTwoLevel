@@ -95,12 +95,13 @@ my @source_hashes= (
 );
 
 my $rand_seed= join("",map chr(rand 256), 1..16);
+TEST:
 foreach my $seed ("1234567812345678", undef, $rand_seed) {
-    foreach my $idx (0 .. (@source_hashes/2)-1) {
-        my $name= $source_hashes[$idx*2];
-        my $source_hash= $source_hashes[$idx*2+1];
-        foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (MIN_VARIANT .. MAX_VARIANT)) {
-            foreach my $canonical (0 .. 1) {
+    foreach my $variant (defined($ENV{VARIANT}) ? ($ENV{VARIANT}) : (MIN_VARIANT .. MAX_VARIANT)) {
+        foreach my $canonical (0 .. 1) {
+            foreach my $idx (0 .. (@source_hashes/2)-1) {
+                my $name= $source_hashes[$idx*2];
+                my $source_hash= $source_hashes[$idx*2+1];
                 my $seed_str= !defined $seed ? "undef" : unpack("H*",$seed);
                 my $title= "$name seed:$seed_str variant:$variant";
                 my $test_fn= "test.$seed_str.$idx.$variant.$canonical.hash";
@@ -159,59 +160,74 @@ foreach my $seed ("1234567812345678", undef, $rand_seed) {
                     my @srt_ofs= sort{ $a <=> $b } @ofs;
                     is("@ofs","@srt_ofs","offsets in the right order");
 
-                    my (@got_keys,@got_fetch_values,@want_keys);
+                    my (@got_keys, @got_fetch_values, @want_keys);
                     {
                         my @bad;
-                        foreach my $key (sort keys %$source_hash) {
+                        foreach my $key (keys %$source_hash) {
                             push @want_keys, $key;
                             my $got= $tied_hash{$key};
                             my $want= $source_hash->{$key};
                             if (defined($got) != defined($want) or (defined($got) and $got ne $want)) {
-                                push @bad, [$key,$got,$want];
+                                push @bad, {key=>$key,got=>$got,want=>$want};
                             }
                         }
-                        is(0+@bad,0,"no bad values via source_hash ($title)")
+                        my $count= 0+@want_keys;
+                        is(0+@bad,0,"no bad values from $count keys from source_hash ($title)")
                             or diag Dumper($bad[0]);
                     }
                     {
                         my @bad;
-                        foreach my $key (sort keys %tied_hash) {
+                        foreach my $key (keys %tied_hash) {
                             push @got_keys, $key;
                             my $got= $tied_hash{$key};
                             my $want= $source_hash->{$key};
                             if (defined($got) != defined($want) or (defined($got) and $got ne $want)) {
-                                push @bad, [$key,$got,$want];
+                                push @bad, { key => $key, got => $got, want => $want };
                             }
                             push @got_fetch_values, $got;
                         }
-                        is(0+@bad,0,"no bad values via tied_hash ($title)")
+                        my $count= 0+@got_keys;
+                        is(0+@bad,0,"no bad values from $count keys from tied_hash ($title)")
                             or diag Dumper($bad[0]);
                     }
-                    my @got_values= sort values %tied_hash;
-                    my @want_values= sort values %$source_hash;
 
+
+
+                    my @got_values= values %tied_hash;
                     my @got_each_keys;
                     my @got_each_values;
                     while (my($k,$v)= each(%tied_hash)) {
                         push @got_each_keys, $k;
                         push @got_each_values, $v;
                     }
-                    @got_fetch_values= sort @got_fetch_values;
-                    @got_each_keys= sort @got_each_keys;
-                    @got_each_values= sort @got_each_values;
+                    my @want_values= sort values %$source_hash;
+                    @want_keys= sort @want_keys;
 
-                    is_deeply(\@got_keys,\@want_keys,"keys in both are the same ($title)");
-                    is_deeply(\@got_each_keys,\@want_keys,"got_keys and got_each_keys agree ($title)");
+                    if ($variant == 5) {
+                        no warnings 'uninitialized';
+                        @got_keys=          sort @got_keys;
+                        @got_each_keys=     sort @got_each_keys;
+                    }
 
-                    is_deeply(\@got_values,\@want_values,"got_values and got_each_values agree ($title)");
-                    is_deeply(\@got_fetch_values,\@want_values,"values in both are same ($title)");
-                    is_deeply(\@got_each_values,\@want_values,"values in both are same ($title)");
+                    {
+                        no warnings 'uninitialized';
+                        @got_each_values=   sort @got_each_values;
+                        @got_values=        sort @got_values;
+                        @got_fetch_values=  sort @got_fetch_values;
+                    }
+
+                    is_deeply(\@got_keys,      \@want_keys, "keys in both are the same ($title)");
+                    is_deeply(\@got_each_keys, \@want_keys, "got_keys and got_each_keys agree ($title)");
+
+                    is_deeply(\@got_values,      \@want_values, "got_values and got_each_values agree ($title)");
+                    is_deeply(\@got_fetch_values,\@want_values, "values in both are same ($title)");
+                    is_deeply(\@got_each_values, \@want_values, "values in both are same ($title)");
 
                     {
                         my @bad;
                         foreach my $idx (0..$#got_keys) {
                             if (utf8::is_utf8($got_keys[$idx]) != utf8::is_utf8($want_keys[$idx])) {
-                                push @bad, [ $got_keys[$idx], $want_keys[$idx] ];
+                                push @bad, {got=> $got_keys[$idx], want=>$want_keys[$idx] };
                             }
                         }
                         is(0+@bad,0,"no keys with differing utf8 flags ($title)")
@@ -221,6 +237,7 @@ foreach my $seed ("1234567812345678", undef, $rand_seed) {
                 } else {
                     ok(0,"test cannot pass if make_file dies") for 1..17;
                 }
+                last TEST if $ENV{SIMPLE_TEST};
             }
         }
     }
