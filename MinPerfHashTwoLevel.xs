@@ -939,6 +939,10 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     IV key_is_utf8_generic=-1;
     IV val_is_utf8_generic=-1;
     char *table;
+    HV **sorted_hvs;
+
+    Newxz(sorted_hvs,bucket_count,HV *);
+    SAVEFREEPV(sorted_hvs);
 
     for (i= 0; i < bucket_count; i++) {
         SV **got= av_fetch(buckets_av,i,0);
@@ -1011,14 +1015,11 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     for (i= 0; i < bucket_count; i++) {
         SV **got= av_fetch(buckets_av,i,0);
         HV *hv= (HV *)SvRV(*got);
-        HE *key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
-        HE *val_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED,0);
         HE *xor_val_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_XOR_VAL,0);
         HE *sort_index_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_SORT_INDEX,0);
         U32 sort_index= sort_index_he ? SvUV(HeVAL(sort_index_he)) : i;
 
         struct mph_sorted_bucket *row_i= (struct mph_sorted_bucket *)(table + (i * bucket_size));
-        struct mph_sorted_bucket *row_s= (struct mph_sorted_bucket *)(table + (sort_index * bucket_size));
 
         if (xor_val_he) {
             row_i->xor_val= SvUV(HeVAL(xor_val_he));
@@ -1027,15 +1028,23 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         }
         if (variant == 6)
             row_i->sort_index= sort_index;
+        sorted_hvs[sort_index]= hv;
+    }
+    for (i= 0; i < bucket_count; i++) {
+        HV *hv= sorted_hvs[i];
+        HE *key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
+        HE *val_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED,0);
 
-        SETOFS(sort_index,key_normalized_he,row_s,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
-        SETOFS(sort_index,val_normalized_he,row_s,val_ofs,val_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
+        struct mph_sorted_bucket *row_s= (struct mph_sorted_bucket *)(table + (i * bucket_size));
+
+        SETOFS(i,key_normalized_he,row_s,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
+        SETOFS(i,val_normalized_he,row_s,val_ofs,val_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
 
         if ( key_is_utf8_generic < 0) {
             HE *key_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,0);
             if (key_is_utf8_he) {
                 UV u= SvUV(HeVAL(key_is_utf8_he));
-                SETBITS(u,key_flags,sort_index,2);
+                SETBITS(u,key_flags,i,2);
             } else {
                 croak("panic: out of memory? no key_is_utf8_he for %u",i);
             }
@@ -1044,7 +1053,7 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
             HE *val_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,0);
             if (val_is_utf8_he) {
                 UV u= SvUV(HeVAL(val_is_utf8_he));
-                SETBITS(u,val_flags,sort_index,1);
+                SETBITS(u,val_flags,i,1);
             } else {
                 croak("panic: out of memory? no val_is_utf8_he for %u",i);
             }
