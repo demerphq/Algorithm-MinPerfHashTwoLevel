@@ -629,52 +629,102 @@ solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_lengt
     return bad_idx;
 }
 
+void
+str_buf_init(pTHX_ struct str_buf *str_buf, char *start, char *pos, char *end) {
+    str_buf->start= start;
+    str_buf->end= end;
+    str_buf->ofs_start= pos;
+    str_buf->pos= pos + 2;
+    pos[0]=0;
+    pos[1]=0;
+    str_buf->hv= (HV*)sv_2mortal((SV*)newHV());
+}
+
+
+U32
+str_buf_add_from_sv(pTHX_ struct str_buf *str_buf, SV *sv, U16 *plen, const U32 flags) {
+    HE *ofs_he;
+    SV *ofs_sv;
+    char *pv;
+    STRLEN len;
+    U32 ofs= 0;
+
+    if (!SvOK(sv)) {
+        if (plen)
+            *plen= 0;
+        return 0;
+    }
+    pv= SvPV(sv,len);
+    if (plen)
+        *plen= len;
+    if (!len)
+        return 1;
+    if (len > UINT16_MAX)
+        croak("string too long!");
+    if (!(flags & MPH_F_NO_DEDUPE)) {
+        ofs_he= hv_fetch_ent(str_buf->hv,sv,1,0); /* lvalue fetch */
+        if (!ofs_he)
+            croak("panic: out of memory getting str ofs HE");
+        ofs_sv= HeVAL(ofs_he);
+        if (!ofs_sv)
+            croak("panic: out of memory getting str ofs SV");
+        if (SvOK(ofs_sv))
+            ofs= SvUV(ofs_sv);
+    }
+    if (!ofs) {
+        if (str_buf->pos + len <= str_buf->end) {
+            ofs= str_buf->pos - str_buf->ofs_start;
+            Copy(pv, str_buf->pos, len, char);
+            str_buf->pos += len;
+            if (ofs_sv)
+                sv_setuv(ofs_sv, ofs);
+        } else {
+            croak("ran out of concat space!");
+        }
+    }
+    return ofs;
+}
+
+U32
+str_buf_add_from_he(pTHX_ struct str_buf *str_buf, HE *he, U16 *plen, const U32 flags) {
+    SV *sv= HeVAL(he);
+    if (!sv)
+        croak("no HE in str_buf_add_from_he!");
+    return str_buf_add_from_sv(aTHX_ str_buf,sv,plen,flags);
+}
+
+void
+str_buf_cat_char(pTHX_ struct str_buf *str_buf, char ch) {
+    if (str_buf->pos + 1 <= str_buf->end) {
+        str_buf->pos[0]= ch;
+        str_buf->pos++;
+    } else {
+        croak("ran out of concat space!");
+    }
+}
+
+STRLEN
+str_buf_finalize(pTHX_ struct str_buf *str_buf, U32 alignment, char *state) {
+    U32 r;
+    str_buf_cat_char(aTHX_ str_buf, 0);
+    str_buf_cat_char(aTHX_ str_buf, 128);
+
+    r= (str_buf->pos - str_buf->start) % alignment;
+    for (;r && r<alignment;r++)
+        str_buf_cat_char(aTHX_ str_buf, 0);
+
+    if (str_buf->pos + sizeof(U64) <= str_buf->end) {
+        *((U64 *)str_buf->pos)= mph_hash_with_state(state, str_buf->start, str_buf->pos - str_buf->start);
+        str_buf->pos += sizeof(U64);
+    } else {
+        croak("not enough space in str_buf to finalize: %ld remaining", str_buf->end - str_buf->pos);
+    }
+
+    return str_buf->pos - str_buf->start;
+}
+
+
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
-
-#define SETOFS(i,he,row,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv)    \
-STMT_START {                                                                \
-        if (he) {                                                           \
-            SV *sv= HeVAL(he);                                              \
-            if (SvOK(sv)) {                                                 \
-                STRLEN pv_len;                                              \
-                char *pv;                                                   \
-                SV *ofs_sv;                                                 \
-                if (flags & MPH_F_NO_DEDUPE) {                              \
-                    ofs_sv= NULL;                                           \
-                } else {                                                    \
-                    HE *ofs= hv_fetch_ent(str_ofs_hv,sv,1,0);               \
-                    ofs_sv= ofs ? HeVAL(ofs) : NULL;                        \
-                    if (!ofs_sv)                                            \
-                        croak("panic: out of memory getting str ofs for " #he "for %u",i);  \
-                }                                                           \
-                if (ofs_sv && SvOK(ofs_sv)){                                \
-                    row->key_ofs= SvUV(ofs_sv);                             \
-                    row->key_len= sv_len(sv);                               \
-                } else {                                                    \
-                    pv= SvPV(sv,pv_len);                                    \
-                    row->key_len= pv_len;                                   \
-                    if (pv_len) {                                           \
-                        row->key_ofs= str_buf_pos - str_buf_start;          \
-                        if (str_buf_pos + pv_len > str_buf_end)             \
-                            croak("panic: string buffer too small in SETOFS, something went horribly wrong."); \
-                        Copy(pv,str_buf_pos,pv_len,char);                   \
-                        str_buf_pos += pv_len;                              \
-                    } else {                                                \
-                        row->key_ofs= 1;                                    \
-                    }                                                       \
-                    if (ofs_sv)                                             \
-                        sv_setuv(ofs_sv,row->key_ofs);                      \
-                }                                                           \
-            } else {                                                        \
-                row->key_ofs= 0;                                            \
-                row->key_len= 0;                                            \
-            }                                                               \
-        } else {                                                            \
-            croak("no " #he " for %u",i);                                   \
-        }                                                                   \
-} STMT_END
-
-
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel
 
 BOOT:
@@ -919,16 +969,14 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
                             alignment );
 
     U32 total_size;
-    HV *str_ofs_hv= (HV *)sv_2mortal((SV*)newHV());
     SV *sv_buf;
     char *start;
+    char *end_pos;
+
+
     struct mph_header *head;
-    char *state;
     char *key_flags;
     char *val_flags;
-    char *str_buf_start;
-    char *str_buf_end;
-    char *str_buf_pos;
     U32 i;
     STRLEN pv_len;
     char *pv;
@@ -939,7 +987,10 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     IV key_is_utf8_generic=-1;
     IV val_is_utf8_generic=-1;
     char *table;
+    char *state;
     HV **sorted_hvs;
+    struct str_buf str_buf_rec;
+    struct str_buf *str_buf= &str_buf_rec;
 
     Newxz(sorted_hvs,bucket_count,HV *);
     SAVEFREEPV(sorted_hvs);
@@ -1003,14 +1054,12 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
 
     key_flags= start + head->key_flags_ofs;
     val_flags= start + head->val_flags_ofs;
-    str_buf_start= start + head->str_buf_ofs;
-    str_buf_end= start + total_size;
-    str_buf_pos= str_buf_start + 2;
 
     Copy(state_pv,state,state_len,char);
-    pv= SvPV(comment_sv,pv_len);
-    Copy(pv,str_buf_pos,pv_len,char);
-    str_buf_pos += pv_len + 1; /* +1 to add a trailing null */
+
+    str_buf_init(str_buf, start, start + head->str_buf_ofs, start + total_size);
+    str_buf_add_from_sv(aTHX_ str_buf,comment_sv,NULL,0);
+    str_buf_cat_char(aTHX_ str_buf,0);
 
     for (i= 0; i < bucket_count; i++) {
         SV **got= av_fetch(buckets_av,i,0);
@@ -1019,15 +1068,15 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         HE *sort_index_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_SORT_INDEX,0);
         U32 sort_index= sort_index_he ? SvUV(HeVAL(sort_index_he)) : i;
 
-        struct mph_sorted_bucket *row_i= (struct mph_sorted_bucket *)(table + (i * bucket_size));
+        struct mph_sorted_bucket *row= (struct mph_sorted_bucket *)(table + (i * bucket_size));
 
         if (xor_val_he) {
-            row_i->xor_val= SvUV(HeVAL(xor_val_he));
+            row->xor_val= SvUV(HeVAL(xor_val_he));
         } else {
-            row_i->xor_val= 0;
+            row->xor_val= 0;
         }
         if (variant == 6)
-            row_i->sort_index= sort_index;
+            row->sort_index= sort_index;
         sorted_hvs[sort_index]= hv;
     }
     for (i= 0; i < bucket_count; i++) {
@@ -1035,10 +1084,10 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         HE *key_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_NORMALIZED,0);
         HE *val_normalized_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED,0);
 
-        struct mph_sorted_bucket *row_s= (struct mph_sorted_bucket *)(table + (i * bucket_size));
+        struct mph_sorted_bucket *row= (struct mph_sorted_bucket *)(table + (i * bucket_size));
 
-        SETOFS(i,key_normalized_he,row_s,key_ofs,key_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
-        SETOFS(i,val_normalized_he,row_s,val_ofs,val_len,str_buf_start,str_buf_pos,str_buf_end,str_ofs_hv);
+        row->key_ofs= str_buf_add_from_he(aTHX_ str_buf,key_normalized_he,&row->key_len,flags);
+        row->val_ofs= str_buf_add_from_he(aTHX_ str_buf,val_normalized_he,&row->val_len,flags);
 
         if ( key_is_utf8_generic < 0) {
             HE *key_is_utf8_he= hv_fetch_ent_with_keysv(hv,MPH_KEYSV_KEY_IS_UTF8,0);
@@ -1059,18 +1108,8 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
             }
         }
     }
-    *str_buf_pos =   0; str_buf_pos++;
-    *str_buf_pos = 128; str_buf_pos++;
-    {
-        U32 r= (str_buf_pos - start) % alignment;
-        if (r) {
-            str_buf_pos += (alignment - r);
-        }
-    }
-    *((U64 *)str_buf_pos)= mph_hash_with_state(state, start, str_buf_pos - start);
-    str_buf_pos += sizeof(U64);
 
-    SvCUR_set(sv_buf, str_buf_pos - start);
+    SvCUR_set(sv_buf, str_buf_finalize(aTHX_ str_buf, alignment, state));
     SvPOK_on(sv_buf);
     RETVAL= sv_buf;
 }
