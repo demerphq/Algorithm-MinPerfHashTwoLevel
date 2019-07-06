@@ -16,6 +16,121 @@
 #include "roundup.h"
 #include "str_buf.h"
 
+MPH_STATIC_INLINE void
+sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift) {
+    U8 *ptr;
+    U8 is_utf8;
+    if (ofs) {
+        ptr= (strs) + (ofs);
+        if (utf8_default) {
+            is_utf8= utf8_default >> utf8_default_shift;
+        } else {
+            GETBITS(is_utf8,flags,idx,bits);
+        }
+    } else {
+        ptr= 0;
+        is_utf8= 0;
+    }
+    /* note that sv_setpvn() will cause the sv to
+     * become undef if ptr is 0 */
+    sv_setpvn_mg((sv),ptr,len);
+    if (is_utf8 > 1) {
+        sv_utf8_upgrade(sv);
+    }
+    else
+    if (is_utf8) {
+        SvUTF8_on(sv);
+    }
+    else
+    if (ptr) {
+        SvUTF8_off(sv);
+    }
+}
+
+int
+lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
+{
+    struct mph_bucket *bucket;
+    U8 *strs;
+    U8 *mph_u8= (U8*)mph;
+    U64 gf= mph->general_flags;
+    if (index >= mph->num_buckets) {
+        return 0;
+    }
+    bucket= (struct mph_bucket *)
+            ((char *)mph + mph->table_ofs + (index * (mph->variant == 5
+                                                      ? sizeof(struct mph_bucket)
+                                                      : sizeof(struct mph_sorted_bucket))));
+
+    strs= (U8 *)mph + mph->str_buf_ofs;
+    if (val_sv) {
+        sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,mph_u8 + mph->val_flags_ofs,1,
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
+    }
+    if (key_sv) {
+        sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,mph_u8 + mph->key_flags_ofs,2,
+                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT);
+    }
+    return 1;
+}
+
+int
+lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
+{
+    U8 *strs= (U8 *)mph + mph->str_buf_ofs;
+    char *table= ((char *)mph + mph->table_ofs);
+    U32 bucket_size= (mph->variant == 5) ? sizeof(struct mph_bucket) : sizeof(struct mph_sorted_bucket);
+    struct mph_sorted_bucket *bucket;
+    U8 *state= (char *)mph + mph->state_ofs;
+    STRLEN key_len;
+    U8 *key_pv;
+    U64 h0;
+    U32 h1;
+    U32 h2;
+    U32 index;
+    U8 *got_key_pv;
+    STRLEN got_key_len;
+
+    if (SvUTF8(key_sv)) {
+        SV *tmp= sv_2mortal(newSVsv(key_sv));
+        sv_utf8_downgrade(tmp,1);
+        key_sv= tmp;
+    }
+    key_pv= SvPV(key_sv,key_len);
+    h0= mph_hash_with_state(state,key_pv,key_len);
+    h1= h0 >> 32;
+    index= h1 % mph->num_buckets;
+
+    bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
+    if (!bucket->xor_val)
+        return 0;
+
+    h2= h0 & 0xFFFFFFFF;
+    if ( bucket->index < 0 ) {
+        index = -bucket->index-1;
+    } else {
+        HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets);
+    }
+    bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
+
+    if (mph->variant == 6) {
+        index= bucket->sort_index;
+        bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
+    }
+
+    got_key_pv= strs + bucket->key_ofs;
+    if (bucket->key_len == key_len && memEQ(key_pv,got_key_pv,key_len)) {
+        if (val_sv) {
+            U64 gf= mph->general_flags;
+            sv_set_from_bucket(aTHX_ val_sv, strs, bucket->val_ofs, bucket->val_len, index,
+                                 ((U8*)mph)+mph->val_flags_ofs, 1,
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 IV
 mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
     struct stat st;
