@@ -258,20 +258,9 @@ normalize_with_flags(pTHX_ SV *sv, SV *normalized_sv, SV *is_utf8_sv, int downgr
     }
 }
 
-START_MY_CXT
-
-I32
-_compare(pTHX_ SV *a, SV *b) {
-    dMY_CXT;
-    HE *a_he= hv_fetch_ent_with_keysv((HV*)SvRV(a),MPH_KEYSV_KEY,0);
-    HE *b_he= hv_fetch_ent_with_keysv((HV*)SvRV(b),MPH_KEYSV_KEY,0);
-
-    return sv_cmp(HeVAL(a_he),HeVAL(b_he));
-}
 
 U32
-normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *buf_length_sv, char *state_pv, U32 variant) {
-    dMY_CXT;
+normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *buf_length_sv, char *state_pv, U32 variant, struct sv_with_hash *keyname_sv) {
     HE *he;
     U32 buf_length= 0;
     U32 ctr;
@@ -328,7 +317,7 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
 }
 
 void
-add_sort_index(pTHX_ AV *keys_av) {
+add_sort_index(pTHX_ AV *keys_av, struct sv_with_hash *keyname_sv) {
     IV idx;
     for (idx= av_top_index(keys_av); idx >= 0; idx--) {
         SV **got_hvref= av_fetch(keys_av,idx,0);
@@ -353,8 +342,7 @@ add_sort_index(pTHX_ AV *keys_av) {
 }
 
 void
-find_first_level_collisions(pTHX_ U32 bucket_count, AV *keys_av, AV *keybuckets_av, AV *h2_packed_av) {
-    dMY_CXT;
+find_first_level_collisions(pTHX_ U32 bucket_count, AV *keys_av, AV *keybuckets_av, AV *h2_packed_av, struct sv_with_hash *keyname_sv) {
     U32 i;
     for (i=0; i<bucket_count;i++) {
         U64 h0;
@@ -427,8 +415,7 @@ idx_by_length(pTHX_ AV *keybuckets_av) {
     return by_length_av;
 }
 
-void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *idx_start, char *is_used, AV *keys_in_bucket_av) {
-    dMY_CXT;
+void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *idx_start, char *is_used, AV *keys_in_bucket_av, struct sv_with_hash *keyname_sv) {
     U32 *idx2;
     HV *idx1_hv;
     U32 i;
@@ -485,7 +472,7 @@ void set_xor_val_in_buckets(pTHX_ U32 xor_val, AV *buckets_av, U32 idx1, U32 *id
 }
 
 U32
-solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, SV *idx1_packed_sv, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx2_start,AV *buckets_av) {
+solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, SV *idx1_packed_sv, AV *h2_packed_av, AV *keybuckets_av, U32 variant, char *is_used, U32 *idx2_start,AV *buckets_av, struct sv_with_hash *keyname_sv) {
     STRLEN idx1_packed_sv_len;
     U32 *idx1_start= (U32 *)SvPV(idx1_packed_sv,idx1_packed_sv_len);
     U32 *idx1_ptr;
@@ -544,13 +531,13 @@ solve_collisions(pTHX_ U32 bucket_count, U32 max_xor_val, SV *idx1_packed_sv, AV
             }
             break;
         }
-        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx2_start, is_used, keys_in_bucket_av);
+        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx2_start, is_used, keys_in_bucket_av,keyname_sv);
     }
     return 0;
 }
 
 U32
-place_singletons(pTHX_ U32 bucket_count, SV *idx1_packed_sv, AV *keybuckets_av, char *is_used, U32 *idx2_start, AV *buckets_av) {
+place_singletons(pTHX_ U32 bucket_count, SV *idx1_packed_sv, AV *keybuckets_av, char *is_used, U32 *idx2_start, AV *buckets_av, struct sv_with_hash *keyname_sv) {
     STRLEN idx1_packed_sv_len;
     U32 *idx1_start= (U32 *)SvPV(idx1_packed_sv,idx1_packed_sv_len);
     U32 *idx1_ptr;
@@ -578,13 +565,13 @@ place_singletons(pTHX_ U32 bucket_count, SV *idx1_packed_sv, AV *keybuckets_av, 
             croak("panic: no keybuckets_av for idx %u",idx1);
         keys_in_bucket_av= (AV *)SvRV(*got);
         *idx2_start= singleton_pos;
-        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx2_start, is_used, keys_in_bucket_av);
+        set_xor_val_in_buckets(aTHX_ xor_val, buckets_av, idx1, idx2_start, is_used, keys_in_bucket_av, keyname_sv);
     }
     return 0;
 }
 
 U32
-solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_length_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, AV *buckets_av) {
+solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_length_av, AV *h2_packed_av, AV *keybuckets_av, U32 variant, AV *buckets_av, struct sv_with_hash *keyname_sv) {
     U32 bad_idx= 0;
     I32 singleton_pos= 0;
     IV len_idx;
@@ -611,105 +598,19 @@ solve_collisions_by_length(pTHX_ U32 bucket_count, U32 max_xor_val, AV *by_lengt
 
         if (len_idx == 1) {
             bad_idx= place_singletons(aTHX_ bucket_count, *idx1_packed_sv, keybuckets_av,
-                is_used, idx2_start, buckets_av);
+                is_used, idx2_start, buckets_av, keyname_sv);
         } else {
             bad_idx= solve_collisions(aTHX_ bucket_count, max_xor_val, *idx1_packed_sv, h2_packed_av, keybuckets_av,
-                variant, is_used, idx2_start, buckets_av);
+                variant, is_used, idx2_start, buckets_av, keyname_sv);
         }
     }
     return bad_idx;
 }
 
+I32 _compare(pTHX_ SV *a, SV *b);
 
-#define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
-MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel
-
-BOOT:
-{
-    MPH_INIT_ALL_KEYSV();
-}
-
-UV
-hash_with_state(str_sv,state_sv)
-        SV* str_sv
-        SV* state_sv
-    PROTOTYPE: $$
-    CODE:
-{
-    STRLEN str_len;
-    STRLEN state_len;
-    U8 *state_pv;
-    U8 *str_pv= (U8 *)SvPV(str_sv,str_len);
-    state_pv= (U8 *)SvPV(state_sv,state_len);
-    if (state_len != MPH_STATE_BYTES) {
-        croak("Error: state vector must be at exactly %d bytes",(int)MPH_SEED_BYTES);
-    }
-    RETVAL= mph_hash_with_state(state_pv,str_pv,str_len);
-}
-    OUTPUT:
-        RETVAL
-
-
-SV *
-seed_state(base_seed_sv)
-        SV* base_seed_sv
-    PROTOTYPE: $
-    CODE:
-{
-    STRLEN seed_len;
-    STRLEN state_len;
-    U8 *seed_pv;
-    U8 *state_pv;
-    SV *seed_sv;
-    if (!SvOK(base_seed_sv))
-        croak("Error: seed must be defined");
-    if (SvROK(base_seed_sv))
-        croak("Error: seed should not be a reference");
-    seed_sv= base_seed_sv;
-    seed_pv= (U8 *)SvPV(seed_sv,seed_len);
-
-    if (seed_len != MPH_SEED_BYTES) {
-        if (SvREADONLY(base_seed_sv)) {
-            if (seed_len < MPH_SEED_BYTES) {
-                warn("seed passed into seed_state() is readonly and too short, argument has been right padded with %d nulls",
-                    (int)(MPH_SEED_BYTES - seed_len));
-            }
-            else if (seed_len > MPH_SEED_BYTES) {
-                warn("seed passed into seed_state() is readonly and too long, using only the first %d bytes",
-                    (int)MPH_SEED_BYTES);
-            }
-            seed_sv= sv_2mortal(newSVsv(base_seed_sv));
-        }
-        if (seed_len < MPH_SEED_BYTES) {
-            sv_grow(seed_sv,MPH_SEED_BYTES+1);
-            while (seed_len < MPH_SEED_BYTES) {
-                seed_pv[seed_len] = 0;
-                seed_len++;
-            }
-        }
-        SvCUR_set(seed_sv,MPH_SEED_BYTES);
-        seed_pv= (U8 *)SvPV(seed_sv,seed_len);
-    } else {
-        seed_sv= base_seed_sv;
-    }
-
-    RETVAL= newSV(MPH_STATE_BYTES+1);
-    SvCUR_set(RETVAL,MPH_STATE_BYTES);
-    SvPOK_on(RETVAL);
-    state_pv= (U8 *)SvPV(RETVAL,state_len);
-    mph_seed_state(seed_pv,state_pv);
-}
-    OUTPUT:
-        RETVAL
-
-
-UV
-compute_xs(self_hv)
-        HV *self_hv
-    PREINIT:
-        dMY_CXT;
-    PROTOTYPE: \%\@
-    CODE:
+UV 
+_compute_xs(pTHX_ HV *self_hv, struct sv_with_hash *keyname_sv)
 {
     U8 *state_pv;
     STRLEN state_len;
@@ -734,7 +635,6 @@ compute_xs(self_hv)
     AV *keybuckets_av;
     AV *h2_packed_av;
 
-    RETVAL = 0;
 
     /**** extract the various reference data we need from $self */
 
@@ -795,7 +695,7 @@ compute_xs(self_hv)
 
     /**** build an array of hashes in keys_av based on the normalized contents of source_hv */
     keys_av= (AV *)sv_2mortal((SV*)newAV());
-    bucket_count= normalize_source_hash(aTHX_ source_hv, keys_av, compute_flags, buf_length_sv, state_pv, variant);
+    bucket_count= normalize_source_hash(aTHX_ source_hv, keys_av, compute_flags, buf_length_sv, state_pv, variant, keyname_sv);
     max_xor_val= INT32_MAX;
 
     /* if the caller wants deterministic results we sort the keys_av
@@ -804,14 +704,14 @@ compute_xs(self_hv)
     if ((compute_flags & MPH_F_DETERMINISTIC) || variant == 6) {
         sortsv(AvARRAY(keys_av),bucket_count,_compare);
         if (variant == 6)
-            add_sort_index(aTHX_ keys_av);
+            add_sort_index(aTHX_ keys_av, keyname_sv);
     }
 
     /**** find the collisions from the data we just computed, build an AoAoH and AoS of the
      **** collision data */
     keybuckets_av= (AV*)sv_2mortal((SV*)newAV()); /* AoAoH - hashes from keys_av */
     h2_packed_av= (AV*)sv_2mortal((SV*)newAV());  /* AoS - packed h1 */
-    find_first_level_collisions(aTHX_ bucket_count, keys_av, keybuckets_av, h2_packed_av);
+    find_first_level_collisions(aTHX_ bucket_count, keys_av, keybuckets_av, h2_packed_av, keyname_sv);
 
     /* Sort the buckets by size by constructing an AoS, with the outer array indexed by length,
      * and the inner string being the list of items of that length. (Thus the contents of index
@@ -824,29 +724,75 @@ compute_xs(self_hv)
      */
     by_length_av= idx_by_length(aTHX_ keybuckets_av);
         
-    RETVAL= solve_collisions_by_length(aTHX_ bucket_count, max_xor_val, by_length_av, h2_packed_av, keybuckets_av, 
-        variant, buckets_av);
+    return solve_collisions_by_length(aTHX_ bucket_count, max_xor_val, by_length_av, h2_packed_av, keybuckets_av, 
+        variant, buckets_av, keyname_sv);
 }
-    OUTPUT:
-        RETVAL
-
-
-
-MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::OnDisk
 
 SV *
-packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
-        U32 variant
-        SV* buf_length_sv
-        SV* state_sv
-        SV* comment_sv
-        AV *buckets_av
-        U32 flags
-    PREINIT:
-        dMY_CXT;
-    PROTOTYPE: $$$$$\@
-    CODE:
+_seed_state(pTHX_ SV *base_seed_sv)
 {
+    STRLEN seed_len;
+    STRLEN state_len;
+    U8 *seed_pv;
+    U8 *state_pv;
+    SV *seed_sv;
+    SV *ret_sv;
+
+    if (!SvOK(base_seed_sv))
+        croak("Error: seed must be defined");
+    if (SvROK(base_seed_sv))
+        croak("Error: seed should not be a reference");
+    seed_sv= base_seed_sv;
+    seed_pv= (U8 *)SvPV(seed_sv,seed_len);
+
+    if (seed_len != MPH_SEED_BYTES) {
+        if (SvREADONLY(base_seed_sv)) {
+            if (seed_len < MPH_SEED_BYTES) {
+                warn("seed passed into seed_state() is readonly and too short, argument has been right padded with %d nulls",
+                    (int)(MPH_SEED_BYTES - seed_len));
+            }
+            else if (seed_len > MPH_SEED_BYTES) {
+                warn("seed passed into seed_state() is readonly and too long, using only the first %d bytes",
+                    (int)MPH_SEED_BYTES);
+            }
+            seed_sv= sv_2mortal(newSVsv(base_seed_sv));
+        }
+        if (seed_len < MPH_SEED_BYTES) {
+            sv_grow(seed_sv,MPH_SEED_BYTES+1);
+            while (seed_len < MPH_SEED_BYTES) {
+                seed_pv[seed_len] = 0;
+                seed_len++;
+            }
+        }
+        SvCUR_set(seed_sv,MPH_SEED_BYTES);
+        seed_pv= (U8 *)SvPV(seed_sv,seed_len);
+    } else {
+        seed_sv= base_seed_sv;
+    }
+
+    ret_sv= newSV(MPH_STATE_BYTES+1);
+    SvCUR_set(ret_sv,MPH_STATE_BYTES);
+    SvPOK_on(ret_sv);
+    state_pv= (U8 *)SvPV(ret_sv,state_len);
+    mph_seed_state(seed_pv,state_pv);
+    return ret_sv;
+}
+
+UV
+_hash_with_state_sv(pTHX_ SV *str_sv, SV *state_sv) {
+    STRLEN str_len;
+    STRLEN state_len;
+    U8 *state_pv;
+    U8 *str_pv= (U8 *)SvPV(str_sv,str_len);
+    state_pv= (U8 *)SvPV(state_sv,state_len);
+    if (state_len != MPH_STATE_BYTES) {
+        croak("Error: state vector must be at exactly %d bytes",(int)MPH_SEED_BYTES);
+    }
+    return mph_hash_with_state(state_pv,str_pv,str_len);
+}
+
+SV *
+_packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv) {
     U32 buf_length= SvUV(buf_length_sv);
     U32 bucket_count= av_top_index(buckets_av) + 1;
     U32 header_rlen= _roundup(sizeof(struct mph_header),16);
@@ -1008,7 +954,104 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
 
     SvCUR_set(sv_buf, str_buf_finalize(aTHX_ str_buf, alignment, state));
     SvPOK_on(sv_buf);
-    RETVAL= sv_buf;
+    return sv_buf;
+}
+
+SV *
+_mount_file(SV *file_sv, SV *error_sv, U32 flags) {
+    struct mph_obj obj;
+    STRLEN file_len;
+    char *file_pv= SvPV(file_sv,file_len);
+    IV mmap_status= mph_mmap(aTHX_ file_pv, &obj, error_sv, flags);
+    SV *retval;
+    if (mmap_status < 0) {
+        return NULL;
+    }
+    /* copy obj into a new SV which we can return */
+    retval= newSVpvn((char *)&obj,sizeof(struct mph_obj));
+    SvPOK_on(retval);
+    SvREADONLY_on(retval);
+    return retval;
+}
+
+#define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
+START_MY_CXT
+
+I32
+_compare(pTHX_ SV *a, SV *b) {
+    dMY_CXT;
+    struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
+    HE *a_he= hv_fetch_ent_with_keysv((HV*)SvRV(a),MPH_KEYSV_KEY,0);
+    HE *b_he= hv_fetch_ent_with_keysv((HV*)SvRV(b),MPH_KEYSV_KEY,0);
+
+    return sv_cmp(HeVAL(a_he),HeVAL(b_he));
+}
+
+MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel
+
+BOOT:
+{
+    MPH_INIT_ALL_KEYSV();
+}
+
+UV
+hash_with_state(str_sv,state_sv)
+        SV* str_sv
+        SV* state_sv
+    PROTOTYPE: $$
+    CODE:
+{
+    RETVAL= _hash_with_state_sv(aTHX_ str_sv, state_sv);
+}
+    OUTPUT:
+        RETVAL
+
+
+SV *
+seed_state(base_seed_sv)
+        SV* base_seed_sv
+    PROTOTYPE: $
+    CODE:
+{
+    RETVAL= _seed_state(aTHX_ base_seed_sv);
+}
+    OUTPUT:
+        RETVAL
+
+
+UV
+compute_xs(self_hv)
+        HV *self_hv
+    PREINIT:
+        dMY_CXT;
+        struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
+    PROTOTYPE: \%\@
+    CODE:
+{
+    RETVAL= _compute_xs(aTHX_ self_hv, keyname_sv);
+}
+    OUTPUT:
+        RETVAL
+
+
+
+MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::OnDisk
+
+SV *
+packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
+        U32 variant
+        SV* buf_length_sv
+        SV* state_sv
+        SV* comment_sv
+        AV *buckets_av
+        U32 flags
+    PREINIT:
+        dMY_CXT;
+        struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
+    PROTOTYPE: $$$$$\@
+    CODE:
+{
+    RETVAL= _packed_xs(variant, buf_length_sv, state_sv, comment_sv, flags, buckets_av, keyname_sv);
 }
     OUTPUT:
         RETVAL
@@ -1021,17 +1064,9 @@ mount_file(file_sv,error_sv,flags)
     PROTOTYPE: $$$
     CODE:
 {
-    struct mph_obj obj;
-    STRLEN file_len;
-    char *file_pv= SvPV(file_sv,file_len);
-    IV mmap_status= mph_mmap(aTHX_ file_pv, &obj, error_sv, flags);
-    if (mmap_status < 0) {
+    RETVAL= _mount_file(aTHX_ file_sv, error_sv, flags);
+    if (!RETVAL)
         XSRETURN_UNDEF;
-    }
-    /* copy obj into a new SV which we can return */
-    RETVAL= newSVpvn((char *)&obj,sizeof(struct mph_obj));
-    SvPOK_on(RETVAL);
-    SvREADONLY_on(RETVAL);
 }
     OUTPUT:
         RETVAL
@@ -1101,6 +1136,7 @@ get_comment(self_hv)
             get_state = 11
     PREINIT:
         dMY_CXT;
+        struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
     PROTOTYPE: $
     CODE:
 {

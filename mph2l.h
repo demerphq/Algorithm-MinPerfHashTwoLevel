@@ -38,8 +38,8 @@
 #define COUNT_MPH_KEYSV 18
 
 #define MPH_INIT_KEYSV(idx, str) STMT_START {                           \
-    MY_CXT.keysv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
-    PERL_HASH(MY_CXT.keysv[idx].hash, (str ""), (sizeof(str) - 1));     \
+    MY_CXT.keyname_sv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
+    PERL_HASH(MY_CXT.keyname_sv[idx].hash, (str ""), (sizeof(str) - 1));     \
 } STMT_END
 
 #define MPH_INIT_ALL_KEYSV() STMT_START {\
@@ -107,10 +107,10 @@
 #endif
 
 #define hv_fetch_ent_with_keysv(hv,keysv_idx,lval)                      \
-    hv_fetch_ent(hv,MY_CXT.keysv[keysv_idx].sv,lval,MY_CXT.keysv[keysv_idx].hash);
+    hv_fetch_ent(hv,keyname_sv[keysv_idx].sv,lval,keyname_sv[keysv_idx].hash);
 
 #define hv_store_ent_with_keysv(hv,keysv_idx,val_sv)                    \
-    hv_store_ent(hv,MY_CXT.keysv[keysv_idx].sv,val_sv,MY_CXT.keysv[keysv_idx].hash);
+    hv_store_ent(hv,keyname_sv[keysv_idx].sv,val_sv,keyname_sv[keysv_idx].hash);
 
 #define hv_copy_with_keysv(hv1,hv2,keysv_idx) STMT_START {              \
     HE *got_he= hv_fetch_ent_with_keysv(hv1,keysv_idx,0);               \
@@ -162,13 +162,13 @@ STMT_START {                                                            \
 #define MAX_VARIANT 6
 #define MIN_VARIANT 5
 
-typedef struct {
+struct sv_with_hash {
     SV *sv;
     U32 hash;
-} sv_with_hash;
+};
 
 typedef struct {
-    sv_with_hash keysv[COUNT_MPH_KEYSV];
+    struct sv_with_hash keyname_sv[COUNT_MPH_KEYSV];
 } my_cxt_t;
 
 struct mph_header {
