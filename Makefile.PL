@@ -28,6 +28,7 @@ WriteMakefile(
     LICENSE           => 'perl',
     DEFINE            => '', # e.g., '-DHAVE_SOMETHING'
     INC               => '-I.', # e.g., '-I. -I/usr/include/other'
+    OBJECT            => '$(BASEEXT)$(OBJ_EXT) mph2l$(OBJ_EXT)',
     OPTIMIZE          => '-O3',
     #OPTIMIZE          => '-g',
 	# Un-comment this if you add C files to link with later:
