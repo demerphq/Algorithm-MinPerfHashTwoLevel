@@ -216,11 +216,3 @@ struct mph_obj {
     struct mph_header *header;
 };
 
-struct str_buf {
-    char *start;
-    char *ofs_start;
-    char *end;
-    char *pos;
-    HV   *hv;
-};
-
