@@ -1,118 +1,113 @@
-package Tie::Hash::MinPerfHashTwoLevel::OnDisk;
+package Tie::Hash::MinPerfHashTwoLevel::MultiLevelOnDisk;
 use strict;
 use warnings;
+use Tie::Hash::MinPerfHashTwoLevel::OnDisk ':flags', ':xs_subs';
 our $VERSION = '0.16';
-our $DEFAULT_VARIANT = 5;
+our $DEFAULT_VARIANT = 6;
+our @ISA= ("Tie::Hash::MinPerfHashTwoLevel::OnDisk");
 
 # this also installs the XS routines we use into our namespace.
-use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', '$DEFAULT_VARIANT', ':flags', 'MAX_VARIANT', 'MIN_VARIANT' );
 use Exporter qw(import);
-my %constants;
-my @xs_sub_names;
-BEGIN {
-    %constants= (
-        MAGIC_STR               =>  "PH2L",
-       #MPH_F_FILTER_UNDEF      =>  (1<<0),
-       #MPH_F_DETERMINISTIC     =>  (1<<1),
-        MPH_F_NO_DEDUPE         =>  (1<<2),
-        MPH_F_VALIDATE          =>  (1<<3),
-    );
-    @xs_sub_names= qw(
-        mount_file
-        unmount_file
-        find_first_prefix
-        find_last_prefix
-        find_first_last_prefix
-        fetch_by_index
-        fetch_by_key
-    );
-}
-
-use constant \%constants;
 use Carp;
+use constant { DEBUG => 0 };
 
 our %EXPORT_TAGS = (
-    'all' => [ qw(mph2l_tied_hashref mph2l_make_file MAX_VARIANT MIN_VARIANT
-                  MPH_F_DETERMINISTIC MPH_F_FILTER_UNDEF), sort keys %constants ],
-    'flags' => ['MPH_F_DETERMINISTIC', 'MPH_F_FILTER_UNDEF', grep /MPH_F_/, sort keys %constants],
-    'magic' => [grep /MAGIC/, sort keys %constants],
-    'xs_subs' => [ @xs_sub_names ], # not in 'all'!
+    'all' => [],
+    'flags' => [],
+    'magic' => [],
 );
 
 my $scalar_has_slash= scalar(%EXPORT_TAGS)=~m!/!;
-our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} }, @xs_sub_names );
+our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
-sub mph2l_tied_hashref {
+sub mph2l_multi_tied_hashref {
     my ($file, %opts)= @_;
     tie my %tied, __PACKAGE__, $file, %opts;
     return \%tied;
 }
 
-sub mph2l_make_file {
-    my ($file, %opts)= @_;
-    return __PACKAGE__->make_file(file => $file, %opts);
-}
-
-sub mph2l_validate_file {
-    my ($file, %opts)= @_;
-    return __PACKAGE__->validate_file(file => $file, %opts);
+sub _debug {
+    my $self= shift;
+    my ($sub)= (caller(1))[3];
+    $sub=~s/^(\w+::)+//;
+    my @extra;
+    while (@_) {
+        my ($key,$value)= splice @_,0,2;
+        push @extra, sprintf "%s=%s", $key, defined $value ? "'$value'" : "undef";
+    }
+    my @v= ($sub, 0+$self, "'$self->{prefix}'", $self->{file}, $self->{leftmost_idx}, $self->{iter_idx}, $self->{rightmost_idx},
+        join " ",@extra);
+    !defined($v[$_]) and die "undefined argument $_" for 0..$#v;
+    warn sprintf "%-8s %08x prefix=%-10s file='%s' leftmost_idx=%d iter_idx=%d rightmost_idx=%d %s\n", @v;
 }
 
 sub new {
     my ($class, %opts)= @_;
 
-    $opts{flags} ||= 0;
-    $opts{flags} |= MPH_F_VALIDATE if $opts{validate};
-    my $error;
-    my $mount= mount_file($opts{file},$error,$opts{flags});
-    my $error_rsv= delete $opts{error_rsv};
-    if ($error_rsv) {
-        $$error_rsv= $error;
-    }
-    if (!defined($mount)) {
-        if ($error_rsv) {
-            return;
-        } else {
-            die "Failed to mount file '$opts{file}': $error";
-        }
-    }
-    $opts{mount}= $mount;
-    my $obj= bless \%opts, $class;
-    $opts{prefix}//="";
-
-    if (length(my $prefix= $opts{prefix})) {
-        if ($obj->get_hdr_variant != 6) {
-            die "Cannot use the prefix option on an unsorted file!";
-        }
-        my $leftmost_idx= find_first_prefix($opts{mount},$prefix);
-        my $rightmost_idx= $leftmost_idx >= 0 ? find_last_prefix($opts{mount},$prefix,$leftmost_idx) : -1;
-        $opts{leftmost_idx}= $leftmost_idx;
-        $opts{rightmost_idx}= $rightmost_idx;
-        $opts{bucket_count}= $rightmost_idx - $leftmost_idx + 1;
+    my $mounted;
+    if (my $obj= delete $opts{obj}) {
+        $opts{$_} //= $obj->{$_} for qw(mount mount_refcount);
     } else {
-        $opts{leftmost_idx}= 0;
-        $opts{bucket_count}= $obj->get_hdr_num_buckets;
-        $opts{rightmost_idx}= $opts{bucket_count}-1;
+        $opts{flags} ||= 0;
+        $opts{flags} |= MPH_F_VALIDATE if $opts{validate};
+        my $error;
+        my $mount= mount_file($opts{file},$error,$opts{flags});
+        my $error_rsv= delete $opts{error_rsv};
+        if ($error_rsv) {
+            $$error_rsv= $error;
+        }
+        if (!defined($mount)) {
+            if ($error_rsv) {
+                return;
+            } else {
+                die "Failed to mount file '$opts{file}': $error";
+            }
+        }
+        $opts{mount}= $mount;
+        $opts{mount_refcount}= \do{my $refcount= 0};
     }
-    my $scalar_buckets= $opts{bucket_count};
-    if ($scalar_buckets && $scalar_has_slash) {
-        $scalar_buckets .= "/" . $scalar_buckets;
+    my $refcount= ++${$opts{mount_refcount}};
+    $opts{separator} //= "/";
+    $opts{separator_qr}= qr!\Q$opts{separator}\E!;
+    my $self= bless \%opts, $class;
+    if ($refcount == 1 and $self->get_hdr_variant != 6) {
+        die "Cannot use the prefix option on an unsorted file!";
     }
-    $opts{scalar_buckets}= $scalar_buckets;
-    $opts{is_empty}= $opts{leftmost_idx} == -1;
-    if ($opts{is_empty}) {
-        if ($opts{allow_empty}) {
-            return $obj;
-        } elsif (defined $opts{allow_empty}) {
-            die "Forbidding empty mapping in '$opts{file}' for prefix '$opts{prefix}' as 'allow_empty' option is set to 0\n";
+    $self->{level} //= 1;
+    $self->set_prefix($opts{prefix}//="");
+    $self->{iter_idx}= $self->{leftmost_idx};
+    DEBUG and $self->_debug();
+    return $self;
+}
+    
+sub set_prefix {
+    my ($self, $prefix)= @_;
+    $self->{prefix}= $prefix // "";
+    if (length(my $prefix= $self->{prefix})) {
+        $self->{leftmost_idx} //= find_first_prefix($self->{mount},$prefix,);
+        $self->{rightmost_idx} //= ( $self->{leftmost_idx} >= 0 
+                                    ? find_last_prefix($self->{mount},$prefix,$self->{leftmost_idx}) 
+                                    : -1);
+        $self->{bucket_count}= $self->{rightmost_idx} - $self->{leftmost_idx} + 1;
+    } else {
+        $self->{leftmost_idx}= 0;
+        $self->{bucket_count}= $self->get_hdr_num_buckets;
+        $self->{rightmost_idx}= $self->{bucket_count}-1; 
+    }
+    $self->{is_empty}= $self->{leftmost_idx} == -1;
+    if ($self->{is_empty}) {
+        if ($self->{allow_empty}) {
+            return $self;
+        } elsif (defined $self->{allow_empty}) {
+            die "Forbidding empty mapping in '$self->{file}' for prefix '$self->{prefix}' as 'allow_empty' option is set to 0\n";
         } else {
-            warn "Allowing empty mapping in '$opts{file}' for prefix '$opts{prefix}' as 'allow_empty' option is undefined.\n"
+            warn "Allowing empty mapping in '$self->{file}' for prefix '$self->{prefix}' as 'allow_empty' option is undefined.\n"
                  ."Explicitly set it to avoid this warning.\n";
         }
     }
-    return $obj;
+    return $self;
 }
 
 sub TIEHASH {
@@ -120,41 +115,84 @@ sub TIEHASH {
     return $class->new( file => $file, %opts );
 }
 
-sub FETCH {
-    my ($self, $key)= @_;
-    my $value;
-    return undef if $self->{is_empty};
-    fetch_by_key($self->{mount},$self->{prefix}.$key,$value)
-        or return;
-    return $value;
-}
 
 sub EXISTS {
     my ($self, $key)= @_;
     return undef if $self->{is_empty};
+    DEBUG and $self->_debug(key=>$key);
     return fetch_by_key($self->{mount},$self->{prefix}.$key);
 }
 
 sub FIRSTKEY {
     my ($self)= @_;
-    return undef if $self->{is_empty};
     $self->{iter_idx}= $self->{leftmost_idx};
     return $self->NEXTKEY();
+}
+
+sub FETCH {
+    my ($self, $key)= @_;
+    return undef if $self->{is_empty};
+    DEBUG and $self->_debug(key=>$key);
+    my $value;
+    $key= $self->{prefix} . $key;
+    if ((!$self->{levels} or $self->{levels} == $self->{level}) and fetch_by_key($self->{mount}, $key, $value)) {
+        DEBUG and $self->_debug(key=>$key,value=>$value);
+        return $value;
+    } else {
+        $key .= $self->{separator};
+        my $leftmost_idx= find_first_last_prefix($self->{mount}, $key, my $rightmost_idx, 
+                            $self->{leftmost_idx}, $self->{rightmost_idx});
+        if ($leftmost_idx >= 0) {
+            my %hash;
+            tie %hash, ref($self), $self->{file}, 
+                obj => $self, 
+                prefix => $key, 
+                leftmost_idx=> $leftmost_idx, 
+                rightmost_idx => $rightmost_idx,
+                level => $self->{level}+1, 
+                levels => $self->{levels};
+            $value= \%hash;
+        }
+    }
+    return $value;
 }
 
 sub NEXTKEY {
     my ($self, $lastkey)= @_;
     return undef if $self->{is_empty};
-    my $key;
+    DEBUG and $self->_debug(lastkey=>$lastkey);
     if ($self->{iter_idx} >= $self->{leftmost_idx} and $self->{iter_idx} <= $self->{rightmost_idx}) {
-        fetch_by_index($self->{mount},$self->{iter_idx}++, $key);
+        fetch_by_index($self->{mount}, $self->{iter_idx}, my $key);
+        return undef unless defined $key;
+        my $tail= substr($key,length($self->{prefix}));
+        my @parts= length $tail ? split $self->{separator_qr}, $tail, -1 : "";
+        if (@parts == 1) {
+            $self->{iter_idx}++;
+            $self->{last_subhash_key}= "";
+        } else {
+            $self->{iter_idx}= find_last_prefix(
+                $self->{mount},
+                $self->{prefix} . $parts[0] . $self->{separator},
+                $self->{iter_idx},
+                $self->{rightmost_idx},
+            ) + 1;
+            $self->{last_subhash_key}= $parts[0];
+        }
+        return $parts[0];
+    } else {
+        return undef;
     }
-    return $key;
 }
 
 sub SCALAR {
     my ($self)= @_;
-    return $self->{scalar_buckets};
+    return $self->{scalar_buckets} //= do {
+        my $scalar_buckets= $self->{bucket_count};
+        if ($scalar_buckets && $scalar_has_slash) {
+            $scalar_buckets .= "/" . $scalar_buckets;
+        }
+        $scalar_buckets;
+    };
 }
 
 sub UNTIE {
@@ -163,7 +201,7 @@ sub UNTIE {
 
 sub DESTROY {
     my ($self)= @_;
-    unmount_file($self->{mount}) if $self->{mount};
+    unmount_file($self->{mount}) if $self->{mount} and --${$self->{mount_refcount}}==0;
 }
 
 sub STORE {
@@ -180,113 +218,6 @@ sub CLEAR {
     my ($self)= @_;
     confess __PACKAGE__ . " is readonly, CLEAR operations are not supported";
 }
-
-sub make_file {
-    my ($class, %opts)= @_;
-
-    my $ofile= $opts{file} 
-        or die "file is a mandatory option to make_file";
-    my $source_hash= $opts{source_hash}
-        or die "source_hash is a mandatory option to make_file";
-    $opts{comment}= "" unless defined $opts{comment};
-    $opts{variant}= $DEFAULT_VARIANT unless defined $opts{variant};
-    
-    my $comment= $opts{comment}||"";
-    my $debug= $opts{debug} || 0;
-    my $variant= int($opts{variant});
-    my $deterministic;
-    $deterministic //= delete $opts{canonical};
-    $deterministic //= delete $opts{deterministic};
-    $deterministic //= 1;
-
-                    #1234567812345678
-    $opts{seed} = "MinPerfHash2Levl"
-        if !defined($opts{seed}) and $deterministic;
-
-    my $compute_flags= int($opts{compute_flags}||0);
-    $compute_flags |= MPH_F_NO_DEDUPE if delete $opts{no_dedupe};
-    $compute_flags |= MPH_F_DETERMINISTIC
-        if $deterministic;
-    $compute_flags |= MPH_F_FILTER_UNDEF
-        if delete $opts{filter_undef};
-
-    die "Unknown variant '$variant', max known is "
-        . MAX_VARIANT . " default is " . $DEFAULT_VARIANT
-        if $variant > MAX_VARIANT;
-    die "Unknown variant '$variant', min known is "
-        . MIN_VARIANT . " default is " . $DEFAULT_VARIANT
-        if $variant < MIN_VARIANT;
-
-    die "comment cannot contain null"
-        if index($comment,"\0") >= 0;
-
-    my $seed= $opts{seed};
-    my $hasher= Algorithm::MinPerfHashTwoLevel->new(
-        debug => $debug,
-        seed => (ref $seed ? $$seed : $seed),
-        variant => $variant,
-        compute_flags => $compute_flags,
-        max_tries => $opts{max_tries},
-    );
-    my $buckets= $hasher->compute($source_hash);
-    my $buf_length= $hasher->{buf_length};
-    my $state= $hasher->{state};
-    my $buf= packed_xs($variant, $buf_length, $state, $comment, $compute_flags, @$buckets);
-    $$seed= $hasher->get_seed if ref $seed;
-
-    my $tmp_file= "$ofile.$$";
-    open my $ofh, ">", $tmp_file
-        or die "Failed to open $tmp_file for output";
-    print $ofh $buf
-        or die "failed to print to '$tmp_file': $!";
-    close $ofh
-        or die "failed to close '$tmp_file': $!";
-    rename $tmp_file, $ofile
-        or die "failed to rename '$tmp_file' to '$ofile': $!";
-    return $ofile;
-}
-
-sub validate_file {
-    my ($class, %opts)= @_;
-    my $file= $opts{file}
-        or die "file is a mandatory option to validate_file";
-    my $verbose= $opts{verbose};
-    my ($variant,$msg);
-
-    my $error_sv;
-    my $self= $class->new(file => $file, flags => MPH_F_VALIDATE, error_rsv => \$error_sv);
-    if ($self) {
-        $msg= sprintf "file '%s' is a valid '%s' file\n"
-         . "  variant: %d\n"
-         . "  keys: %d\n"
-         . "  hash-state: %s\n"
-         . "  table  checksum: %016x\n"
-         . "  string checksum: %016x\n"
-         . "  comment: %s"
-         ,  $file,
-            MAGIC_STR,
-            $self->get_hdr_variant,
-            $self->get_hdr_num_buckets,
-            unpack("H*", $self->get_state),
-            $self->get_hdr_table_checksum,
-            $self->get_hdr_str_buf_checksum,
-            $self->get_comment,
-        ;
-        $variant = $self->get_hdr_variant;
-    } else {
-        $msg= $error_sv;
-    }
-    if ($verbose) {
-        if (defined $variant) {
-            print $msg;
-        } else {
-            die $msg."\n";
-        }
-    }
-    return ($variant, $msg);
-}
-
-
 
 1;
 __END__

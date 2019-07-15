@@ -227,3 +227,7 @@ SV *_mount_file(SV *file_sv, SV *error_sv, U32 flags);
 void _mph_munmap(struct mph_obj *obj);
 int lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv);
 int lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv);
+IV find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val);
+IV find_first_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, IV *last);
+IV find_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);
+IV find_first_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);

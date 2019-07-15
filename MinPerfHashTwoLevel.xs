@@ -8,6 +8,8 @@
 #include "ppport.h"
 #include "mph2l.h"
 
+/* all the interesting stuff is in mph2l.c */
+
 #define MY_CXT_KEY "Algorithm::MinPerfHashTwoLevel::_stash" XS_VERSION
 START_MY_CXT
 
@@ -17,8 +19,9 @@ _compare(pTHX_ SV *a, SV *b) {
     struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
     HE *a_he= hv_fetch_ent_with_keysv((HV*)SvRV(a),MPH_KEYSV_KEY,0);
     HE *b_he= hv_fetch_ent_with_keysv((HV*)SvRV(b),MPH_KEYSV_KEY,0);
-
-    return sv_cmp(HeVAL(a_he),HeVAL(b_he));
+    SV *a_sv= HeVAL(a_he);
+    SV *b_sv= HeVAL(b_he);
+    return sv_cmp(a_sv,b_sv);
 }
 
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel
@@ -116,8 +119,64 @@ unmount_file(mount_sv)
     SvOK_off(mount_sv);
 }
 
+IV
+find_first_prefix(mount_sv,pfx_sv,...)
+        SV* mount_sv
+        SV* pfx_sv
+    ALIAS:
+            find_last_prefix = 1
+    PROTOTYPE: $$;$$
+    CODE:
+{
+    IV l;
+    IV r;
+    struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    if (items > 2)
+        l= SvIV(ST(2));
+    else
+        l= 0;
+    if (items > 3)
+        r= SvIV(ST(3))+1;
+    else
+        r= obj->header->num_buckets;
+    if (items > 4)
+        croak("too many arguments!");
+    RETVAL= find_prefix(aTHX_ obj->header, pfx_sv, l, r, ix);
+}
+    OUTPUT:
+        RETVAL
 
-int
+IV
+find_first_last_prefix(mount_sv,pfx_sv,last_sv,...)
+        SV* mount_sv
+        SV* pfx_sv
+        SV* last_sv
+    PROTOTYPE: $$$;$$
+    CODE:
+{
+    IV l;
+    IV r;
+    IV last;
+    struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    if (items > 3)
+        l= SvIV(ST(3));
+    else
+        l= 0;
+    if (items > 4)
+        r= SvIV(ST(4))+1;
+    else
+        r= obj->header->num_buckets;
+    if (items > 5)
+        croak("too many arguments!");
+    RETVAL= find_first_last_prefix(aTHX_ obj->header, pfx_sv, l, r, &last);
+    sv_setiv(last_sv, last);
+}
+    OUTPUT:
+        RETVAL
+
+
+
+IV
 fetch_by_index(mount_sv,index,...)
         SV* mount_sv
         U32 index
@@ -135,7 +194,7 @@ fetch_by_index(mount_sv,index,...)
     OUTPUT:
         RETVAL
 
-int
+IV
 fetch_by_key(mount_sv,key_sv,...)
         SV* mount_sv
         SV* key_sv

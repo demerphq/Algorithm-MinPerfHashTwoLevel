@@ -17,7 +17,7 @@
 #include "str_buf.h"
 
 MPH_STATIC_INLINE void
-sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift) {
+sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift, const U8 normalized) {
     U8 *ptr;
     U8 is_utf8;
     if (ofs) {
@@ -35,7 +35,11 @@ sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U
      * become undef if ptr is 0 */
     sv_setpvn_mg((sv),ptr,len);
     if (is_utf8 > 1) {
-        sv_utf8_upgrade(sv);
+        if (normalized) {
+            SvUTF8_off(sv);
+        } else {
+            sv_utf8_upgrade(sv);
+        }
     }
     else
     if (is_utf8) {
@@ -46,6 +50,150 @@ sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U
         SvUTF8_off(sv);
     }
 }
+UV cmp_count= 0;
+
+/* returns 1 if the string in l_sv starts with the string in r_sv */
+I32
+sv_prefix_cmp(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
+    STRLEN l_len;
+    STRLEN r_len;
+    char *l_pv;
+    char *r_pv;
+    I32 cmp;
+    if (SvUTF8(l_sv)) {
+        /* left side is utf8, so use the r_sv_utf8 which should always be there */
+        r_pv= SvPV(r_sv_utf8,r_len);
+    } else {
+        /* left side is not utf8, so use the r_sv, but if it is NULL then the RHS cannot
+         * be represented as a unicode. Which means we need to upgrade the lhs first. */
+        if (r_sv) {
+            /* we have a r_sv, so we can use the downgraded form. */
+            r_pv= SvPV(r_sv,r_len);
+        } else {
+            sv_utf8_upgrade(l_sv);
+            r_pv= SvPV(r_sv_utf8,r_len);
+        }
+    }
+    l_pv= SvPV(l_sv,l_len);
+    cmp_count++;
+    /* at this point, if we get here then the l_pv and r_pv are in the same encoding */
+    cmp = strncmp(l_pv,r_pv,l_len < r_len ? l_len : r_len);
+    return cmp < 0 ? -1
+                   : cmp > 0 ? 1
+                             : l_len < r_len ? -1 : 0;
+}
+
+#define dSETUP_SVS(pfx_sv)                              \
+    SV *got_sv= sv_2mortal(newSV(0));                   \
+    SV *cmp_sv= sv_2mortal(newSVsv(pfx_sv));            \
+    SV *cmp_sv_utf8= sv_2mortal(newSVsv(pfx_sv))
+
+#define DEBUGF 0
+IV
+_find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, SV *got_sv, SV *cmp_sv, SV *cmp_sv_utf8)
+{
+    U32 num_buckets = mph->num_buckets;
+    struct mph_bucket *bucket;
+    I32 cmp;
+    U8 *strs;
+    U8 *mph_u8= (U8*)mph;
+    U64 gf= mph->general_flags;
+    char *table_start= (char *)mph + mph->table_ofs;
+    U32 row_size= (mph->variant == 5
+                      ? sizeof(struct mph_bucket)
+                      : sizeof(struct mph_sorted_bucket));
+    IV m= (cmp_val && l<r) ? l+1 : ((l+r)/2);
+    if (DEBUGF) warn("l: %ld m: %ld r: %ld !!!\n", l, m, r);
+
+    if (SvUTF8(cmp_sv_utf8))
+        sv_utf8_downgrade(cmp_sv,1);
+    else
+        sv_utf8_upgrade(cmp_sv_utf8);
+    if (SvUTF8(cmp_sv))
+        cmp_sv= NULL;
+
+    strs= (U8 *)mph + mph->str_buf_ofs;
+    /* when "cmp_val" is 0 this is the "find the leftmost case of T in a sorted list" variant
+     * of binary search, (alternatively put "find the number of items which are less
+     * than T in a sorted list"), when "cmp_val" is 1 this is the "find the rightmost case of T in
+     * a sorted list" variant (alternatively put "find the number of items which are more
+     * than T in a sorted list").
+     *
+     * These algorithms deal with dupes just fine, which is what we want for prefix searches,
+     * we *expect* to see many items for a given prefix.
+     *
+     * Unlike conventional binary searches the result is stored in 'l' not 'm'. The correct position
+     * is held in l-cmp_val. (Eg, for "leftmost" the result is l, for "rightmost" the result is l-1,
+     * which just happens to be the same as l - cmp_val.)
+     *
+     */
+    while (l < r) {
+        STRLEN got_len;
+        bucket= (struct mph_bucket *)(table_start + m * row_size);
+
+        if (DEBUGF) warn("l: %ld m: %ld r: %ld\n", l, m, r);
+        if (m>=num_buckets) croak("m is larger than last bucket! for %"SVf,pfx_sv);
+        sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,mph_u8 + mph->key_flags_ofs,2,
+                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
+        cmp= sv_prefix_cmp(aTHX_ got_sv, cmp_sv, cmp_sv_utf8);
+        if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
+
+        if (cmp < cmp_val) {
+            l = m + 1;
+        } else {
+            r = m;
+        }
+        m= (l + r) / 2;
+    }
+    if (cmp_val) {
+        if (!l) return -1;
+        l -= cmp_val;
+    }
+    if (l>=num_buckets) return -1;
+    //croak("m is larger than last bucket! %"SVf,pfx_sv);
+
+    /* l now specifies the leftmost or rightmost position that matches the prefix,
+     * but we still have to check if there actually are any elements that start with
+     * the prefix, there might not be. (When there are no such items the leftmost
+     * and rightmost position are the same.) */
+    bucket= (struct mph_bucket *)(table_start + (l * row_size));
+    sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,l,mph_u8 + mph->key_flags_ofs,2,
+                             gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
+    cmp= sv_prefix_cmp(aTHX_ got_sv,cmp_sv, cmp_sv_utf8);
+
+    if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
+    return !cmp ? l : -1;
+}
+
+IV find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val)
+{
+    dSETUP_SVS(pfx_sv);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, cmp_val, got_sv, cmp_sv, cmp_sv_utf8);
+}
+
+IV
+find_first_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r)
+{
+    dSETUP_SVS(pfx_sv);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, got_sv, cmp_sv, cmp_sv_utf8);
+}
+
+IV
+find_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r)
+{
+    dSETUP_SVS(pfx_sv);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 1, got_sv, cmp_sv, cmp_sv_utf8);
+}
+
+IV
+find_first_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, IV *last)
+{
+    dSETUP_SVS(pfx_sv);
+    IV first= _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, got_sv, cmp_sv, cmp_sv_utf8);
+    *last= first >= 0 ? _find_prefix(aTHX_ mph, pfx_sv, first, r, 1, got_sv, cmp_sv, cmp_sv_utf8) : -1;
+    return first;
+}
+
 
 int
 lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
@@ -65,11 +213,11 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
     strs= (U8 *)mph + mph->str_buf_ofs;
     if (val_sv) {
         sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,mph_u8 + mph->val_flags_ofs,1,
-                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT,0);
     }
     if (key_sv) {
         sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,mph_u8 + mph->key_flags_ofs,2,
-                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT);
+                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,0);
     }
     return 1;
 }
@@ -124,7 +272,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
             U64 gf= mph->general_flags;
             sv_set_from_bucket(aTHX_ val_sv, strs, bucket->val_ofs, bucket->val_len, index,
                                  ((U8*)mph)+mph->val_flags_ofs, 1,
-                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT,0);
         }
         return 1;
     }
