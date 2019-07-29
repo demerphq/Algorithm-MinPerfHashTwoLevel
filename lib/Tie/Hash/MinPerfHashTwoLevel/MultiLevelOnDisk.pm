@@ -9,7 +9,14 @@ our @ISA= ("Tie::Hash::MinPerfHashTwoLevel::OnDisk");
 # this also installs the XS routines we use into our namespace.
 use Exporter qw(import);
 use Carp;
-use constant { DEBUG => 0 };
+use constant {
+    DEBUG               => 0,
+    MOUNT_IDX           => 0,
+    REFCOUNT_IDX        => 1,
+    SEPARATOR_IDX       => 2,
+    SEPARATOR_LATIN1_IDX  => 3,
+    SEPARATOR_UTF8_IDX  => 4,
+};
 
 our %EXPORT_TAGS = (
     'all' => [],
@@ -44,12 +51,23 @@ sub _debug {
 }
 
 sub new {
-    my ($class, %opts)= @_;
+    my $self;
+    if (@_==2) {
+        $self= bless \my %opts, ref($_[0]);
+        $opts{prefix}= $_[1][1];
 
-    my $mounted;
-    if (my $obj= delete $opts{obj}) {
-        $opts{$_} //= $obj->{$_} for qw(mount mount_refcount);
+        if (utf8::is_utf8($_[1][1])) { $opts{prefix_utf8}= $_[1][1]; }
+        else { $opts{prefix_latin1}= $_[1][1]; };
+
+        $opts{leftmost_idx}= $_[1][2];
+        $opts{rightmost_idx}= $_[1][3];
+
+        ($opts{mount}= $_[0]->{mount})->[REFCOUNT_IDX]++;
+        $opts{level}= $_[0]->{level} + 1;
+        $opts{levels}= $_[0]->{levels};
     } else {
+        my ($class,%opts)= @_;
+        $self= bless \%opts, $class;
         $opts{flags} ||= 0;
         $opts{flags} |= MPH_F_VALIDATE if $opts{validate};
         my $error;
@@ -65,143 +83,119 @@ sub new {
                 die "Failed to mount file '$opts{file}': $error";
             }
         }
-        $opts{mount}= $mount;
-        $opts{mount_refcount}= \do{my $refcount= 0};
+        my $sep= $opts{separator} //= "/";
+        if (length($sep) != 1 or ord($sep) > 127) {
+            die "Separator MUST be a single ASCII character (eg 0-127)";
+        }
+
+        $opts{mount}= [ $mount, 1, $opts{separator} ];
+        if ($self->get_hdr_variant != 6) {
+            die "Cannot use the prefix option on an unsorted file!";
+        }
+        $self->{level}= 1;
+        $self->{levels}||= 0;
+        $self->{prefix} //= "";
+        if (length(my $prefix= $self->{prefix})) {
+            $self->{leftmost_idx} //= find_first_prefix($self->{mount}[0],$prefix);
+            if ( $self->{leftmost_idx} < 0 ) {
+                $self->{rightmost_idx}= -1;
+            } else {
+                $self->{rightmost_idx} //= find_last_prefix($self->{mount}[0],$prefix,$self->{leftmost_idx});
+            }
+        } else {
+            $self->{leftmost_idx}= 0;
+            $self->{rightmost_idx}= $self->get_hdr_num_buckets - 1;
+        }
     }
-    my $refcount= ++${$opts{mount_refcount}};
-    $opts{separator} //= "/";
-    $opts{separator_qr}= qr!\Q$opts{separator}\E!;
-    my $self= bless \%opts, $class;
-    if ($refcount == 1 and $self->get_hdr_variant != 6) {
-        die "Cannot use the prefix option on an unsorted file!";
-    }
-    $self->{level} //= 1;
-    $self->set_prefix($opts{prefix}//="");
-    $self->{iter_idx}= $self->{leftmost_idx};
+    my $fetch_key_only=  $self->{fetch_key_only}= $self->{levels} && $self->{level} == $self->{levels};
+    $self->{fetch_key_first}= $fetch_key_only ? 2 : (!$self->{prefix} || $self->{level} >= $self->{levels});
     DEBUG and $self->_debug();
     return $self;
 }
-    
-sub set_prefix {
-    my ($self, $prefix)= @_;
-    $self->{prefix}= $prefix // "";
-    if (length(my $prefix= $self->{prefix})) {
-        $self->{leftmost_idx} //= find_first_prefix($self->{mount},$prefix,);
-        $self->{rightmost_idx} //= ( $self->{leftmost_idx} >= 0 
-                                    ? find_last_prefix($self->{mount},$prefix,$self->{leftmost_idx}) 
-                                    : -1);
-        $self->{bucket_count}= $self->{rightmost_idx} - $self->{leftmost_idx} + 1;
-    } else {
-        $self->{leftmost_idx}= 0;
-        $self->{bucket_count}= $self->get_hdr_num_buckets;
-        $self->{rightmost_idx}= $self->{bucket_count}-1; 
-    }
-    $self->{is_empty}= $self->{leftmost_idx} == -1;
-    if ($self->{is_empty}) {
-        if ($self->{allow_empty}) {
-            return $self;
-        } elsif (defined $self->{allow_empty}) {
-            die "Forbidding empty mapping in '$self->{file}' for prefix '$self->{prefix}' as 'allow_empty' option is set to 0\n";
-        } else {
-            warn "Allowing empty mapping in '$self->{file}' for prefix '$self->{prefix}' as 'allow_empty' option is undefined.\n"
-                 ."Explicitly set it to avoid this warning.\n";
-        }
-    }
-    return $self;
-}
 
-sub TIEHASH {
-    my ($class, $file, %opts)= @_;
-    return $class->new( file => $file, %opts );
-}
+
+*TIEHASH= *new;
 
 
 sub EXISTS {
     my ($self, $key)= @_;
-    return undef if $self->{is_empty};
     DEBUG and $self->_debug(key=>$key);
-    return fetch_by_key($self->{mount},$self->{prefix}.$key);
+    return fetch_by_key($self->{mount}[MOUNT_IDX],$self->{prefix}.$key);
 }
 
-sub FIRSTKEY {
-    my ($self)= @_;
-    $self->{iter_idx}= $self->{leftmost_idx};
-    return $self->NEXTKEY();
-}
-
-sub FETCH {
+# mixed XS/pure-perl version of FETCH - the real FETCH is in MinPerfHashTwoLevel.xs
+sub _FETCH {
     my ($self, $key)= @_;
-    return undef if $self->{is_empty};
     DEBUG and $self->_debug(key=>$key);
-    my $value;
+    my ($value, $leftmost_idx, $rightmost_idx);
+    my $mount= $self->{mount};
     $key= $self->{prefix} . $key;
-    if ((!$self->{levels} or $self->{levels} == $self->{level}) and fetch_by_key($self->{mount}, $key, $value)) {
-        DEBUG and $self->_debug(key=>$key,value=>$value);
-        return $value;
-    } else {
-        $key .= $self->{separator};
-        my $leftmost_idx= find_first_last_prefix($self->{mount}, $key, my $rightmost_idx, 
-                            $self->{leftmost_idx}, $self->{rightmost_idx});
-        if ($leftmost_idx >= 0) {
-            my %hash;
-            tie %hash, ref($self), $self->{file}, 
-                obj => $self, 
-                prefix => $key, 
-                leftmost_idx=> $leftmost_idx, 
-                rightmost_idx => $rightmost_idx,
-                level => $self->{level}+1, 
-                levels => $self->{levels};
-            $value= \%hash;
+    if ($self->{fetch_key_first}) {
+        if (fetch_by_key($mount->[MOUNT_IDX], $key, $value)) {
+            DEBUG and $self->_debug(key=>$key,value=>$value);
+            return $value;
+        } elsif ($self->{fetch_key_only}) {
+            return undef;
         }
+    }
+
+    $key .= $mount->[SEPARATOR_IDX];
+    $leftmost_idx= find_first_last_prefix($mount->[MOUNT_IDX], $key, $rightmost_idx,
+                        $self->{leftmost_idx}, $self->{rightmost_idx});
+    if ($leftmost_idx >= 0) {
+        my %hash;
+        tie %hash, $self, [ $self, $key, $leftmost_idx, $rightmost_idx ];
+        $value= \%hash;
     }
     return $value;
 }
 
-sub NEXTKEY {
-    my ($self, $lastkey)= @_;
-    return undef if $self->{is_empty};
-    DEBUG and $self->_debug(lastkey=>$lastkey);
-    if ($self->{iter_idx} >= $self->{leftmost_idx} and $self->{iter_idx} <= $self->{rightmost_idx}) {
-        fetch_by_index($self->{mount}, $self->{iter_idx}, my $key);
-        return undef unless defined $key;
-        my $tail= substr($key,length($self->{prefix}));
-        my @parts= length $tail ? split $self->{separator_qr}, $tail, -1 : "";
-        if (@parts == 1) {
-            $self->{iter_idx}++;
-            $self->{last_subhash_key}= "";
-        } else {
-            $self->{iter_idx}= find_last_prefix(
-                $self->{mount},
-                $self->{prefix} . $parts[0] . $self->{separator},
-                $self->{iter_idx},
-                $self->{rightmost_idx},
-            ) + 1;
-            $self->{last_subhash_key}= $parts[0];
-        }
-        return $parts[0];
-    } else {
+# mixed XS/pure-perl version of FETCH - the real FETCH is in MinPerfHashTwoLevel.xs
+sub _NEXTKEY {
+    my ($self)= @_;
+    $self->{iter_idx}= $self->{leftmost_idx} unless defined $_[1];
+    DEBUG and $self->_debug(lastkey=>$_[1]);
+    my $mount= $self->{mount};
+
+    fetch_by_index($mount->[MOUNT_IDX], $self->{iter_idx}, my $key)
+        or return undef;
+
+    my $l= length($self->{prefix});
+    if (substr($key,0,$l) ne $self->{prefix}) {
         return undef;
     }
+
+    my $ofs= index($key,$mount->[SEPARATOR_IDX],$l);
+    my $part;
+    if ($ofs<0) {
+        $self->{iter_idx}++;
+        $part= substr($key,$l);
+    } else {
+        $part= substr($key,$l,$ofs-$l);
+        $self->{iter_idx}= find_last_prefix(
+            $self->{mount}[0],
+            substr($key,0,$ofs+1), # include separator!
+            $self->{iter_idx},
+            $self->{rightmost_idx},
+        ) + 1;
+    }
+    return $part;
 }
+
 
 sub SCALAR {
     my ($self)= @_;
     return $self->{scalar_buckets} //= do {
-        my $scalar_buckets= $self->{bucket_count};
-        if ($scalar_buckets && $scalar_has_slash) {
-            $scalar_buckets .= "/" . $scalar_buckets;
+        my $bucket_count= $self->{rightmost_idx} - $self->{leftmost_idx} + 1;
+        if ($bucket_count && $scalar_has_slash) {
+            $bucket_count .= "/" . $bucket_count;
         }
-        $scalar_buckets;
+        $bucket_count;
     };
 }
 
 sub UNTIE {
     my ($self)= @_;
-}
-
-sub DESTROY {
-    my ($self)= @_;
-    unmount_file($self->{mount}) if $self->{mount} and --${$self->{mount_refcount}}==0;
 }
 
 sub STORE {
@@ -238,7 +232,7 @@ Tie::Hash::MinPerfHashTwoLevel::OnDisk - construct or tie a "two level" minimal 
   );
 
   my %hash;
-  tie %hash, "Tie::Hash::MinPerfHashTwoLevel::OnDisk", $some_file;
+  tie %hash, "Tie::Hash::MinPerfHashTwoLevel::OnDisk", file => $some_file;
 
 =head1 DESCRIPTION
 

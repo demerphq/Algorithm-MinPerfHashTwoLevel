@@ -34,8 +34,17 @@
 #define MPH_KEYSV_BUF_LENGTH        15
 #define MPH_KEYSV_BUCKETS           16
 #define MPH_KEYSV_MOUNT             17
+#define MPH_KEYSV_ITER_IDX          18
+#define MPH_KEYSV_LEFTMOST_IDX      19
+#define MPH_KEYSV_RIGHTMOST_IDX     20
+#define MPH_KEYSV_PREFIX            21
+#define MPH_KEYSV_PREFIX_UTF8       22
+#define MPH_KEYSV_PREFIX_LATIN1     23
+#define MPH_KEYSV_FETCH_KEY_FIRST   24
+#define MPH_KEYSV_LEVEL             25
+#define MPH_KEYSV_LEVELS            26
 
-#define COUNT_MPH_KEYSV 18
+#define COUNT_MPH_KEYSV 27
 
 #define MPH_INIT_KEYSV(idx, str) STMT_START {                           \
     MY_CXT.keyname_sv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
@@ -63,6 +72,15 @@
     MPH_INIT_KEYSV(MPH_KEYSV_BUF_LENGTH,"buf_length");          \
     MPH_INIT_KEYSV(MPH_KEYSV_BUCKETS,"buckets");                \
     MPH_INIT_KEYSV(MPH_KEYSV_MOUNT,"mount");                    \
+    MPH_INIT_KEYSV(MPH_KEYSV_ITER_IDX,"iter_idx");              \
+    MPH_INIT_KEYSV(MPH_KEYSV_LEFTMOST_IDX,"leftmost_idx");      \
+    MPH_INIT_KEYSV(MPH_KEYSV_RIGHTMOST_IDX,"rightmost_idx");    \
+    MPH_INIT_KEYSV(MPH_KEYSV_PREFIX,"prefix");                  \
+    MPH_INIT_KEYSV(MPH_KEYSV_PREFIX_UTF8,"prefix_utf8");        \
+    MPH_INIT_KEYSV(MPH_KEYSV_PREFIX_LATIN1,"prefix_latin1");    \
+    MPH_INIT_KEYSV(MPH_KEYSV_FETCH_KEY_FIRST,"fetch_key_first");    \
+    MPH_INIT_KEYSV(MPH_KEYSV_LEVEL,"level");    \
+    MPH_INIT_KEYSV(MPH_KEYSV_LEVELS,"levels");    \
 } STMT_END
 
 #define MPH_F_FILTER_UNDEF          (1<<0)
@@ -109,6 +127,12 @@
 #define hv_fetch_ent_with_keysv(hv,keysv_idx,lval)                      \
     hv_fetch_ent(hv,keyname_sv[keysv_idx].sv,lval,keyname_sv[keysv_idx].hash);
 
+#define hv_fetch_sv_with_keysv(sv,hv,keysv_idx,lval) STMT_START {           \
+    HE *got_he= hv_fetch_ent_with_keysv(hv,keysv_idx,lval);                 \
+    if (!got_he) croak("failed to fetch item in hv_fetch_sv_with_keysv()"); \
+    sv= HeVAL(got_he);                                                      \
+} STMT_END
+
 #define hv_store_ent_with_keysv(hv,keysv_idx,val_sv)                    \
     hv_store_ent(hv,keyname_sv[keysv_idx].sv,val_sv,keyname_sv[keysv_idx].hash);
 
@@ -120,6 +144,8 @@
         SvREFCNT_inc(got_sv);                                           \
     }                                                                   \
 } STMT_END
+
+
 
 #define hv_setuv_with_keysv(hv,keysv_idx,uv)                            \
 STMT_START {                                                            \
@@ -231,3 +257,5 @@ IV find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val
 IV find_first_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, IV *last);
 IV find_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);
 IV find_first_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);
+I32 sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8);
+I32 sv_prefix_cmp2(pTHX_ SV *l_sv, SV *r_sv);

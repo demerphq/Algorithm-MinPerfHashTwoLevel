@@ -33,7 +33,7 @@ sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U
     }
     /* note that sv_setpvn() will cause the sv to
      * become undef if ptr is 0 */
-    sv_setpvn_mg((sv),ptr,len);
+    sv_setpvn((sv),ptr,len);
     if (is_utf8 > 1) {
         if (normalized) {
             SvUTF8_off(sv);
@@ -54,7 +54,7 @@ UV cmp_count= 0;
 
 /* returns 1 if the string in l_sv starts with the string in r_sv */
 I32
-sv_prefix_cmp(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
+sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
     STRLEN l_len;
     STRLEN r_len;
     char *l_pv;
@@ -65,7 +65,7 @@ sv_prefix_cmp(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
         r_pv= SvPV(r_sv_utf8,r_len);
     } else {
         /* left side is not utf8, so use the r_sv, but if it is NULL then the RHS cannot
-         * be represented as a unicode. Which means we need to upgrade the lhs first. */
+         * be downgraded to latin1. Which means we need to upgrade the lhs first. */
         if (r_sv) {
             /* we have a r_sv, so we can use the downgraded form. */
             r_pv= SvPV(r_sv,r_len);
@@ -82,6 +82,30 @@ sv_prefix_cmp(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
                    : cmp > 0 ? 1
                              : l_len < r_len ? -1 : 0;
 }
+
+I32
+sv_prefix_cmp2(pTHX_ SV *l_sv, SV *r_sv) {
+    int l_is_utf8= SvUTF8(l_sv) ? 1 : 0;
+    int r_is_utf8= SvUTF8(r_sv) ? 1 : 0;
+    if (l_is_utf8 == r_is_utf8) {
+        return sv_prefix_cmp3(aTHX_ l_sv, r_sv, r_sv);
+    }
+    else
+    if (r_is_utf8) {
+        SV *l_sv_utf8= sv_2mortal(newSVsv(l_sv));
+        sv_utf8_upgrade(l_sv_utf8);
+        return sv_prefix_cmp3(aTHX_ l_sv_utf8, NULL, r_sv);
+    }
+    else {
+        SV *r_sv_utf8= sv_2mortal(newSVsv(r_sv));
+        sv_utf8_upgrade(r_sv_utf8);
+        return sv_prefix_cmp3(aTHX_ l_sv, r_sv, r_sv_utf8);
+    }
+    /* NOT-REACHED */
+}
+
+
+
 
 #define dSETUP_SVS(pfx_sv)                              \
     SV *got_sv= sv_2mortal(newSV(0));                   \
@@ -135,7 +159,7 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
         if (m>=num_buckets) croak("m is larger than last bucket! for %"SVf,pfx_sv);
         sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,mph_u8 + mph->key_flags_ofs,2,
                                  gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
-        cmp= sv_prefix_cmp(aTHX_ got_sv, cmp_sv, cmp_sv_utf8);
+        cmp= sv_prefix_cmp3(aTHX_ got_sv, cmp_sv, cmp_sv_utf8);
         if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
 
         if (cmp < cmp_val) {
@@ -159,7 +183,7 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
     bucket= (struct mph_bucket *)(table_start + (l * row_size));
     sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,l,mph_u8 + mph->key_flags_ofs,2,
                              gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
-    cmp= sv_prefix_cmp(aTHX_ got_sv,cmp_sv, cmp_sv_utf8);
+    cmp= sv_prefix_cmp3(aTHX_ got_sv, cmp_sv, cmp_sv_utf8);
 
     if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
     return !cmp ? l : -1;

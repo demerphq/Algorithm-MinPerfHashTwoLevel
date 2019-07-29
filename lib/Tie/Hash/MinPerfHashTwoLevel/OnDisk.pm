@@ -78,7 +78,7 @@ sub new {
             die "Failed to mount file '$opts{file}': $error";
         }
     }
-    $opts{mount}= $mount;
+    $opts{mount}= [$mount,1];
     my $obj= bless \%opts, $class;
     $opts{prefix}//="";
 
@@ -86,8 +86,8 @@ sub new {
         if ($obj->get_hdr_variant != 6) {
             die "Cannot use the prefix option on an unsorted file!";
         }
-        my $leftmost_idx= find_first_prefix($opts{mount},$prefix);
-        my $rightmost_idx= $leftmost_idx >= 0 ? find_last_prefix($opts{mount},$prefix,$leftmost_idx) : -1;
+        my $leftmost_idx= find_first_prefix($opts{mount}[0],$prefix);
+        my $rightmost_idx= $leftmost_idx >= 0 ? find_last_prefix($opts{mount}[0],$prefix,$leftmost_idx) : -1;
         $opts{leftmost_idx}= $leftmost_idx;
         $opts{rightmost_idx}= $rightmost_idx;
         $opts{bucket_count}= $rightmost_idx - $leftmost_idx + 1;
@@ -124,7 +124,7 @@ sub FETCH {
     my ($self, $key)= @_;
     my $value;
     return undef if $self->{is_empty};
-    fetch_by_key($self->{mount},$self->{prefix}.$key,$value)
+    fetch_by_key($self->{mount}[0],$self->{prefix}.$key,$value)
         or return;
     return $value;
 }
@@ -132,7 +132,7 @@ sub FETCH {
 sub EXISTS {
     my ($self, $key)= @_;
     return undef if $self->{is_empty};
-    return fetch_by_key($self->{mount},$self->{prefix}.$key);
+    return fetch_by_key($self->{mount}[0],$self->{prefix}.$key);
 }
 
 sub FIRSTKEY {
@@ -147,7 +147,7 @@ sub NEXTKEY {
     return undef if $self->{is_empty};
     my $key;
     if ($self->{iter_idx} >= $self->{leftmost_idx} and $self->{iter_idx} <= $self->{rightmost_idx}) {
-        fetch_by_index($self->{mount},$self->{iter_idx}++, $key);
+        fetch_by_index($self->{mount}[0],$self->{iter_idx}++, $key);
     }
     return $key;
 }
@@ -163,7 +163,10 @@ sub UNTIE {
 
 sub DESTROY {
     my ($self)= @_;
-    unmount_file($self->{mount}) if $self->{mount};
+    if ($self->{mount} and not(--$self->{mount}[1])) {
+        unmount_file($self->{mount}[0]);
+        delete $self->{mount};
+    }
 }
 
 sub STORE {
