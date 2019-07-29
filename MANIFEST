@@ -1,5 +1,6 @@
 Changes
 lib/Algorithm/MinPerfHashTwoLevel.pm
+lib/Tie/Hash/MinPerfHashTwoLevel/Mount.pm
 lib/Tie/Hash/MinPerfHashTwoLevel/MultiLevelOnDisk.pm
 lib/Tie/Hash/MinPerfHashTwoLevel/OnDisk.pm
 Makefile.PL
@@ -13,7 +14,6 @@ ppport.h
 README
 roundup.h
 str_buf.h
-t.pl
 t/Algo_fail.t
 t/Algo_v5.t
 t/Algo_v6.t
