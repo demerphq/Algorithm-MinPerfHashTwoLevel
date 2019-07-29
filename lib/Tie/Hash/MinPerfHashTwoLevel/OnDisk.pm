@@ -5,6 +5,7 @@ our $VERSION = '0.16';
 our $DEFAULT_VARIANT = 5;
 
 # this also installs the XS routines we use into our namespace.
+use Tie::Hash::MinPerfHashTwoLevel::Mount qw(MPH_F_VALIDATE);
 use Algorithm::MinPerfHashTwoLevel ( 'hash_with_state', '$DEFAULT_VARIANT', ':flags', 'MAX_VARIANT', 'MIN_VARIANT' );
 use Exporter qw(import);
 my %constants;
@@ -14,12 +15,10 @@ BEGIN {
         MAGIC_STR               =>  "PH2L",
        #MPH_F_FILTER_UNDEF      =>  (1<<0),
        #MPH_F_DETERMINISTIC     =>  (1<<1),
-        MPH_F_NO_DEDUPE         =>  (1<<2),
-        MPH_F_VALIDATE          =>  (1<<3),
+       MPH_F_NO_DEDUPE          =>  (1<<2),
+       #MPH_F_VALIDATE          =>  (1<<3),
     );
     @xs_sub_names= qw(
-        mount_file
-        unmount_file
         find_first_prefix
         find_last_prefix
         find_first_last_prefix
@@ -32,9 +31,13 @@ use constant \%constants;
 use Carp;
 
 our %EXPORT_TAGS = (
-    'all' => [ qw(mph2l_tied_hashref mph2l_make_file MAX_VARIANT MIN_VARIANT
-                  MPH_F_DETERMINISTIC MPH_F_FILTER_UNDEF), sort keys %constants ],
-    'flags' => ['MPH_F_DETERMINISTIC', 'MPH_F_FILTER_UNDEF', grep /MPH_F_/, sort keys %constants],
+    'all' => [ qw(mph2l_tied_hashref mph2l_make_file MAX_VARIANT MIN_VARIANT),
+               'MPH_F_DETERMINISTIC', 'MPH_F_FILTER_UNDEF', 'MPH_F_VALIDATE',
+               sort keys %constants ],
+    'flags' => [
+                 'MPH_F_DETERMINISTIC', 'MPH_F_FILTER_UNDEF', 'MPH_F_VALIDATE',
+                 grep /MPH_F_/, sort keys %constants
+             ],
     'magic' => [grep /MAGIC/, sort keys %constants],
     'xs_subs' => [ @xs_sub_names ], # not in 'all'!
 );
@@ -63,22 +66,7 @@ sub mph2l_validate_file {
 sub new {
     my ($class, %opts)= @_;
 
-    $opts{flags} ||= 0;
-    $opts{flags} |= MPH_F_VALIDATE if $opts{validate};
-    my $error;
-    my $mount= mount_file($opts{file},$error,$opts{flags});
-    my $error_rsv= delete $opts{error_rsv};
-    if ($error_rsv) {
-        $$error_rsv= $error;
-    }
-    if (!defined($mount)) {
-        if ($error_rsv) {
-            return;
-        } else {
-            die "Failed to mount file '$opts{file}': $error";
-        }
-    }
-    $opts{mount}= [$mount,1];
+    $opts{mount}= Tie::Hash::MinPerfHashTwoLevel::Mount->new(\%opts);
     my $obj= bless \%opts, $class;
     $opts{prefix}//="";
 
@@ -155,18 +143,6 @@ sub NEXTKEY {
 sub SCALAR {
     my ($self)= @_;
     return $self->{scalar_buckets};
-}
-
-sub UNTIE {
-    my ($self)= @_;
-}
-
-sub DESTROY {
-    my ($self)= @_;
-    if ($self->{mount} and not(--$self->{mount}[1])) {
-        unmount_file($self->{mount}[0]);
-        delete $self->{mount};
-    }
 }
 
 sub STORE {

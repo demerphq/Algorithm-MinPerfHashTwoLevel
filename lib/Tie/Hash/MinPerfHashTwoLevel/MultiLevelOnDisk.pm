@@ -1,6 +1,7 @@
 package Tie::Hash::MinPerfHashTwoLevel::MultiLevelOnDisk;
 use strict;
 use warnings;
+use Tie::Hash::MinPerfHashTwoLevel::Mount;
 use Tie::Hash::MinPerfHashTwoLevel::OnDisk ':flags', ':xs_subs';
 our $VERSION = '0.16';
 our $DEFAULT_VARIANT = 6;
@@ -12,10 +13,7 @@ use Carp;
 use constant {
     DEBUG               => 0,
     MOUNT_IDX           => 0,
-    REFCOUNT_IDX        => 1,
-    SEPARATOR_IDX       => 2,
-    SEPARATOR_LATIN1_IDX  => 3,
-    SEPARATOR_UTF8_IDX  => 4,
+    SEPARATOR_IDX       => 1,
 };
 
 our %EXPORT_TAGS = (
@@ -62,33 +60,17 @@ sub new {
         $opts{leftmost_idx}= $_[1][2];
         $opts{rightmost_idx}= $_[1][3];
 
-        ($opts{mount}= $_[0]->{mount})->[REFCOUNT_IDX]++;
+        $opts{mount}= $_[0]->{mount};
         $opts{level}= $_[0]->{level} + 1;
         $opts{levels}= $_[0]->{levels};
     } else {
         my ($class,%opts)= @_;
-        $self= bless \%opts, $class;
-        $opts{flags} ||= 0;
-        $opts{flags} |= MPH_F_VALIDATE if $opts{validate};
-        my $error;
-        my $mount= mount_file($opts{file},$error,$opts{flags});
-        my $error_rsv= delete $opts{error_rsv};
-        if ($error_rsv) {
-            $$error_rsv= $error;
-        }
-        if (!defined($mount)) {
-            if ($error_rsv) {
-                return;
-            } else {
-                die "Failed to mount file '$opts{file}': $error";
-            }
-        }
         my $sep= $opts{separator} //= "/";
         if (length($sep) != 1 or ord($sep) > 127) {
             die "Separator MUST be a single ASCII character (eg 0-127)";
         }
-
-        $opts{mount}= [ $mount, 1, $opts{separator} ];
+        my $mount= $opts{mount}= Tie::Hash::MinPerfHashTwoLevel::Mount->new(\%opts);
+        $self= bless \%opts, $class;
         if ($self->get_hdr_variant != 6) {
             die "Cannot use the prefix option on an unsorted file!";
         }
@@ -96,11 +78,11 @@ sub new {
         $self->{levels}||= 0;
         $self->{prefix} //= "";
         if (length(my $prefix= $self->{prefix})) {
-            $self->{leftmost_idx} //= find_first_prefix($self->{mount}[0],$prefix);
+            $self->{leftmost_idx} //= find_first_prefix($mount->[MOUNT_IDX],$prefix);
             if ( $self->{leftmost_idx} < 0 ) {
                 $self->{rightmost_idx}= -1;
             } else {
-                $self->{rightmost_idx} //= find_last_prefix($self->{mount}[0],$prefix,$self->{leftmost_idx});
+                $self->{rightmost_idx} //= find_last_prefix($mount->[MOUNT_IDX],$prefix,$self->{leftmost_idx});
             }
         } else {
             $self->{leftmost_idx}= 0;
@@ -173,7 +155,7 @@ sub _NEXTKEY {
     } else {
         $part= substr($key,$l,$ofs-$l);
         $self->{iter_idx}= find_last_prefix(
-            $self->{mount}[0],
+            $mount->[MOUNT_IDX],
             substr($key,0,$ofs+1), # include separator!
             $self->{iter_idx},
             $self->{rightmost_idx},

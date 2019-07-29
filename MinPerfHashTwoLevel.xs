@@ -93,32 +93,6 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     OUTPUT:
         RETVAL
 
-SV*
-mount_file(file_sv,error_sv,flags)
-        SV* file_sv
-        SV* error_sv
-        U32 flags
-    PROTOTYPE: $$$
-    CODE:
-{
-    RETVAL= _mount_file(aTHX_ file_sv, error_sv, flags);
-    if (!RETVAL)
-        XSRETURN_UNDEF;
-}
-    OUTPUT:
-        RETVAL
-
-void
-unmount_file(mount_sv)
-        SV* mount_sv
-    PROTOTYPE: $
-    CODE:
-{
-    struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
-    _mph_munmap(obj);
-    SvOK_off(mount_sv);
-}
-
 IV
 find_first_prefix(mount_sv,pfx_sv,...)
         SV* mount_sv
@@ -245,7 +219,7 @@ get_comment(self_hv)
     /* yes, yes, this is overly pedantic */
     mount_rv= HeVAL(got);
     mount_av= (AV *)SvRV(mount_rv);
-    mount_svp= av_fetch(mount_av,0,0);
+    mount_svp= av_fetch(mount_av,MOUNT_ARRAY_MOUNT_IDX,0);
     mount_sv= *mount_svp;
 
     if (!mount_sv || !SvPOK(mount_sv))
@@ -309,7 +283,7 @@ NEXTKEY(self_hv,...)
     /* yes, yes, this is overly pedantic */
     mount_rv= HeVAL(got_he);
     mount_av= (AV *)SvRV(mount_rv);
-    svp= av_fetch(mount_av,0,0);
+    svp= av_fetch(mount_av,MOUNT_ARRAY_MOUNT_IDX,0);
     mount_sv= *svp;
     obj= (struct mph_obj *)SvPV_nolen(mount_sv);
 
@@ -357,7 +331,7 @@ NEXTKEY(self_hv,...)
     if (sv_prefix_cmp3(nextkey_sv,prefix_sv,prefix_sv))
         XSRETURN_UNDEF;
 
-    svp= av_fetch(mount_av,2,0);
+    svp= av_fetch(mount_av,MOUNT_ARRAY_SEPARATOR_IDX,0);
     separator= (SvPV_nolen(*svp))[0];
 
     nextkey_pv= SvPV_nomg(nextkey_sv, nextkey_len);
@@ -418,7 +392,7 @@ FETCH(self_hv, key_sv)
     /* yes, yes, this is overly pedantic */
     mount_rv= HeVAL(got_he);
     mount_av= (AV *)SvRV(mount_rv);
-    svp= av_fetch(mount_av,0,0);
+    svp= av_fetch(mount_av,MOUNT_ARRAY_MOUNT_IDX,0);
     mount_sv= *svp;
     obj= (struct mph_obj *)SvPV_nolen(mount_sv);
 
@@ -431,7 +405,7 @@ FETCH(self_hv, key_sv)
     if ( !(SvIV(fetch_key_first_sv) && (lookup_key(aTHX_ obj->header, fetch_key_sv, RETVAL) || SvIV(fetch_key_first_sv)>1))) {
         SV *rightmost_idx_sv;
         SV *leftmost_idx_sv;
-        SV **separator_svp= av_fetch(mount_av,2,0);
+        SV **separator_svp= av_fetch(mount_av,MOUNT_ARRAY_SEPARATOR_IDX,0);
 
         sv_catsv(fetch_key_sv,*separator_svp);
         hv_fetch_sv_with_keysv(leftmost_idx_sv,self_hv,MPH_KEYSV_LEFTMOST_IDX,1);
@@ -465,9 +439,6 @@ FETCH(self_hv, key_sv)
             hv_fetch_sv_with_keysv(key_mount_rv,obj_hv,MPH_KEYSV_MOUNT,1);
             sv_setsv(key_mount_rv, mount_rv);
 
-            svp= av_fetch(mount_av,1,0);
-            sv_inc(*svp);
-
             hv_fetch_sv_with_keysv(key_level_sv,obj_hv,MPH_KEYSV_LEVEL,1);
             hv_fetch_sv_with_keysv(key_levels_sv,obj_hv,MPH_KEYSV_LEVELS,1);
 
@@ -493,5 +464,33 @@ FETCH(self_hv, key_sv)
 }
     OUTPUT:
         RETVAL
+
+MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::Mount
+
+SV*
+mount_file(file_sv,error_sv,flags)
+        SV* file_sv
+        SV* error_sv
+        U32 flags
+    PROTOTYPE: $$$
+    CODE:
+{
+    RETVAL= _mount_file(aTHX_ file_sv, error_sv, flags);
+    if (!RETVAL)
+        XSRETURN_UNDEF;
+}
+    OUTPUT:
+        RETVAL
+
+void
+unmount_file(mount_sv)
+        SV* mount_sv
+    PROTOTYPE: $
+    CODE:
+{
+    struct mph_obj *obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    _mph_munmap(obj);
+    SvOK_off(mount_sv);
+}
 
 

@@ -46,6 +46,9 @@
 
 #define COUNT_MPH_KEYSV 27
 
+#define MOUNT_ARRAY_MOUNT_IDX 0
+#define MOUNT_ARRAY_SEPARATOR_IDX 1
+
 #define MPH_INIT_KEYSV(idx, str) STMT_START {                           \
     MY_CXT.keyname_sv[idx].sv = newSVpvn((str ""), (sizeof(str) - 1));       \
     PERL_HASH(MY_CXT.keyname_sv[idx].hash, (str ""), (sizeof(str) - 1));     \
