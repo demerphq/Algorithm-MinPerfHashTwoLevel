@@ -43,8 +43,9 @@
 #define MPH_KEYSV_FETCH_KEY_FIRST   24
 #define MPH_KEYSV_LEVEL             25
 #define MPH_KEYSV_LEVELS            26
+#define MPH_KEYSV_FAST_PROPS        27
 
-#define COUNT_MPH_KEYSV 27
+#define COUNT_MPH_KEYSV 28
 
 #define MOUNT_ARRAY_MOUNT_IDX 0
 #define MOUNT_ARRAY_SEPARATOR_IDX 1
@@ -84,6 +85,7 @@
     MPH_INIT_KEYSV(MPH_KEYSV_FETCH_KEY_FIRST,"fetch_key_first");    \
     MPH_INIT_KEYSV(MPH_KEYSV_LEVEL,"level");    \
     MPH_INIT_KEYSV(MPH_KEYSV_LEVELS,"levels");    \
+    MPH_INIT_KEYSV(MPH_KEYSV_FAST_PROPS,"_fast_props");    \
 } STMT_END
 
 #define MPH_F_FILTER_UNDEF          (1<<0)
@@ -243,6 +245,20 @@ struct mph_sorted_bucket {
 struct mph_obj {
     size_t bytes;
     struct mph_header *header;
+};
+
+struct mph_multilevel {
+    IV iter_idx;
+    IV leftmost_idx;
+    IV rightmost_idx;
+    IV bucket_count;
+    SV *prefix_sv;
+    SV *prefix_utf8_sv;
+    SV *prefix_latin1_sv;
+    IV level;
+    IV levels;
+    IV fetch_key_first;
+    char separator;
 };
 
 #include "mph_hv_macro.h"

@@ -24,6 +24,70 @@ _compare(pTHX_ SV *a, SV *b) {
     return sv_cmp(a_sv,b_sv);
 }
 
+I32 setup_fast_props(pTHX_ HV *self_hv, AV *mount_av, struct sv_with_hash *keyname_sv, SV *fast_props_sv) {
+    SV *sv;
+    SV **svp;
+    struct mph_multilevel ml;
+    
+    hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_PREFIX,1);
+    ml.prefix_sv= sv;
+    ml.prefix_utf8_sv= NULL;
+    ml.prefix_latin1_sv= NULL;
+
+    hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_LEFTMOST_IDX,1);
+    ml.leftmost_idx= SvIV(sv);
+
+    hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_RIGHTMOST_IDX,1);
+    ml.rightmost_idx= SvIV(sv);
+
+    hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_LEVEL,1);
+    ml.level= SvIV(sv);
+
+    hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_LEVELS,1);
+    ml.levels= SvIV(sv);
+
+    hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_FETCH_KEY_FIRST,1);
+    ml.fetch_key_first= SvIV(sv);
+
+    svp= av_fetch(mount_av,MOUNT_ARRAY_SEPARATOR_IDX,0);
+    ml.separator= SvPV_nolen(*svp)[0];
+
+    sv_setpvn(fast_props_sv,(char *)&ml,sizeof(struct mph_multilevel));
+}
+
+#define dFAST_PROPS \
+    struct mph_multilevel *ml; \
+    SV *fast_props_sv
+
+#define GET_FAST_PROPS(self_hv) STMT_START {                                    \
+    hv_fetch_sv_with_keysv(fast_props_sv, self_hv, MPH_KEYSV_FAST_PROPS,1);     \
+    if (!SvOK(fast_props_sv))                                                   \
+        setup_fast_props(aTHX_ self_hv, mount_av, keyname_sv, fast_props_sv);   \
+    ml= (struct mph_multilevel *)SvPV_nolen(fast_props_sv);                     \
+} STMT_END
+
+#define dMOUNT        \
+    struct mph_obj *obj= NULL;  \
+    SV *mount_rv;               \
+    AV *mount_av;               \
+    SV *mount_sv
+
+#define GET_MOUNT_AND_OBJ(self_hv)                                  \
+STMT_START {                                                        \
+    SV **mount_svp;                                                 \
+    HE *mount_he;                                                   \
+                                                                    \
+    mount_he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_MOUNT,0);   \
+    if (!mount_he)                                                  \
+        croak("must be mounted to use this function");              \
+                                                                    \
+    mount_rv= HeVAL(mount_he);                                      \
+    mount_av= (AV *)SvRV(mount_rv);                                 \
+    mount_svp= av_fetch(mount_av,MOUNT_ARRAY_MOUNT_IDX,0);          \
+    mount_sv= *mount_svp;                                           \
+    obj= (struct mph_obj *)SvPV_nolen(mount_sv);                    \
+} STMT_END
+
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel
 
 BOOT:
@@ -207,24 +271,11 @@ get_comment(self_hv)
     PROTOTYPE: $
     CODE:
 {
-    struct mph_obj *obj;
-    SV *mount_rv;
-    SV **mount_svp;
-    SV *mount_sv;
-    AV *mount_av;
+    dMOUNT;
     char *start;
-    HE *got= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_MOUNT,0);
-    if (!got)
-        croak("must be mounted to use this function");
-    /* yes, yes, this is overly pedantic */
-    mount_rv= HeVAL(got);
-    mount_av= (AV *)SvRV(mount_rv);
-    mount_svp= av_fetch(mount_av,MOUNT_ARRAY_MOUNT_IDX,0);
-    mount_sv= *mount_svp;
 
-    if (!mount_sv || !SvPOK(mount_sv))
-        croak("$self->'mount' is expected to be a string!");
-    obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    GET_MOUNT_AND_OBJ(self_hv);
+
     start= (char *)obj->header;
     switch(ix) {
         case  0: RETVAL= newSVpv(start + obj->header->str_buf_ofs + 2,0); break;
@@ -256,104 +307,92 @@ NEXTKEY(self_hv,...)
             FIRSTKEY = 1
     CODE:
 {
-    SV *mount_rv;
-    SV **svp;
-    SV *mount_sv;
     char separator;
     char *separator_pos;
-    AV *mount_av;
 
-    struct mph_obj *obj;
     SV *iter_idx_sv;
     SV *rightmost_idx_sv;
-    SV *prefix_sv;
     IV status;
     SV *nextkey_sv= newSV(0);
-    int n_is_utf8;
+    int was_latin1= 0;
     IV iv;
 
     STRLEN nextkey_len;
     char *nextkey_pv;
-    STRLEN prefix_len;
-    char *prefix_pv;
+    
+    SV *this_prefix_sv;
+    STRLEN this_prefix_len;
+    char *this_prefix_pv;
 
-    HE *got_he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_MOUNT,0);
-    if (!got_he)
-        croak("must be mounted to use this function");
-    /* yes, yes, this is overly pedantic */
-    mount_rv= HeVAL(got_he);
-    mount_av= (AV *)SvRV(mount_rv);
-    svp= av_fetch(mount_av,MOUNT_ARRAY_MOUNT_IDX,0);
-    mount_sv= *svp;
-    obj= (struct mph_obj *)SvPV_nolen(mount_sv);
+    dMOUNT;
+    dFAST_PROPS;
 
-    hv_fetch_sv_with_keysv(iter_idx_sv,self_hv,MPH_KEYSV_ITER_IDX,1);
-    if (ix) { /* FIRSTKEY */
-        SV *leftmost_idx_sv;
-        hv_fetch_sv_with_keysv(leftmost_idx_sv,self_hv,MPH_KEYSV_LEFTMOST_IDX,1);
-        sv_setiv(iter_idx_sv,SvIV(leftmost_idx_sv));
-        /* warn("init iter_idx_sv=leftmost_idx=%ld",SvIV(leftmost_idx_sv)); */
-    }
+    GET_MOUNT_AND_OBJ(self_hv);
+    GET_FAST_PROPS(self_hv);
 
-    status= lookup_bucket(aTHX_ obj->header,SvIV(iter_idx_sv),nextkey_sv,NULL);
-    if (!status) XSRETURN_UNDEF;
+    if (ix) /* FIRSTKEY */
+        ml->iter_idx= ml->leftmost_idx;
 
-    n_is_utf8= SvUTF8(nextkey_sv) ? 1 : 0;
-
-    if (n_is_utf8) {
-        SV *prefix_utf8_sv;
-        hv_fetch_sv_with_keysv(prefix_utf8_sv,self_hv,MPH_KEYSV_PREFIX_UTF8,1);
-        if (!SvOK(prefix_utf8_sv)) {
-            hv_fetch_sv_with_keysv(prefix_sv,self_hv,MPH_KEYSV_PREFIX,1);
-            sv_setsv(prefix_utf8_sv,prefix_sv);
-            sv_utf8_upgrade(prefix_utf8_sv);
-        }
-        prefix_sv= prefix_utf8_sv;
-    } else {
-        SV *prefix_latin1_sv;
-        hv_fetch_sv_with_keysv(prefix_latin1_sv,self_hv,MPH_KEYSV_PREFIX_LATIN1,1);
-        if (!SvOK(prefix_latin1_sv)) {
-            hv_fetch_sv_with_keysv(prefix_sv,self_hv,MPH_KEYSV_PREFIX,1);
-            sv_setsv(prefix_latin1_sv,prefix_sv);
-            sv_utf8_downgrade(prefix_latin1_sv,1);
-            if (SvUTF8(prefix_latin1_sv)) {
-                sv_utf8_upgrade(nextkey_sv);
-                n_is_utf8 = 2;
-            } else {
-                prefix_sv= prefix_latin1_sv;
-            }
-        } else {
-            prefix_sv= prefix_latin1_sv;
-        }
-    }
-    /* at this point prefix_sv and nextkey_sv have the same utf8ness */
-
-    if (sv_prefix_cmp3(nextkey_sv,prefix_sv,prefix_sv))
+    status= lookup_bucket(aTHX_ obj->header, ml->iter_idx, nextkey_sv, NULL);
+    if (!status)
         XSRETURN_UNDEF;
 
-    svp= av_fetch(mount_av,MOUNT_ARRAY_SEPARATOR_IDX,0);
-    separator= (SvPV_nolen(*svp))[0];
+    this_prefix_sv= ml->prefix_sv;
+
+    if (SvUTF8(nextkey_sv)) {
+        if (!SvUTF8(ml->prefix_sv)) {
+            if (!ml->prefix_utf8_sv) {
+                SV *prefix_utf8_sv;
+                hv_fetch_sv_with_keysv(prefix_utf8_sv,self_hv,MPH_KEYSV_PREFIX_UTF8,1);
+                sv_setsv(prefix_utf8_sv,ml->prefix_sv);
+                sv_utf8_upgrade(prefix_utf8_sv);
+                ml->prefix_utf8_sv= prefix_utf8_sv;
+            }
+            this_prefix_sv= ml->prefix_utf8_sv;
+        }
+    } else {
+        if (SvUTF8(ml->prefix_sv)) {
+            if (!ml->prefix_latin1_sv) {
+                SV *prefix_latin1_sv;
+                hv_fetch_sv_with_keysv(prefix_latin1_sv,self_hv,MPH_KEYSV_PREFIX_LATIN1,1);
+                sv_setsv(prefix_latin1_sv,ml->prefix_sv);
+                sv_utf8_downgrade(prefix_latin1_sv,1);
+                ml->prefix_latin1_sv= prefix_latin1_sv;
+            }
+            /* might not be downgradable! */
+            if (SvUTF8(ml->prefix_latin1_sv)) {
+                sv_utf8_upgrade(nextkey_sv);
+                was_latin1 = 1;
+            } else {
+                this_prefix_sv= ml->prefix_latin1_sv;
+            }
+        }
+    }
+    /* at this point prefix_sv and nextkey_sv have the same utf8ness 
+     * which is why we can pass the same var into both the latin1 and utf8 slot */
+
+    if (sv_prefix_cmp3(nextkey_sv,this_prefix_sv,this_prefix_sv))
+        XSRETURN_UNDEF;
+
+    separator= ml->separator;
 
     nextkey_pv= SvPV_nomg(nextkey_sv, nextkey_len);
-    prefix_pv= SvPV_nomg(prefix_sv, prefix_len);
+    this_prefix_pv= SvPV_nomg(this_prefix_sv, this_prefix_len);
 
-    separator_pos= (prefix_len <= nextkey_len)
-                   ? memchr(nextkey_pv + prefix_len, separator, nextkey_len - prefix_len)
+    separator_pos= (this_prefix_len <= nextkey_len)
+                   ? memchr(nextkey_pv + this_prefix_len, separator, nextkey_len - this_prefix_len)
                    : NULL;
 
     if (!separator_pos) {
-        sv_inc(iter_idx_sv);
+        ml->iter_idx++;
     } else {
         SvCUR_set(nextkey_sv,separator_pos - nextkey_pv + 1);
-        hv_fetch_sv_with_keysv(rightmost_idx_sv,self_hv,MPH_KEYSV_RIGHTMOST_IDX,1);
-        iv= find_last_prefix(aTHX_ obj->header,nextkey_sv,SvIV(iter_idx_sv),SvIV(rightmost_idx_sv)+1);
-        sv_setiv(iter_idx_sv, iv+1);
+        ml->iter_idx= 1 + find_last_prefix(aTHX_ obj->header,nextkey_sv,ml->iter_idx,ml->rightmost_idx+1);
         SvCUR_set(nextkey_sv,separator_pos - nextkey_pv);
     }
-    sv_chop(nextkey_sv,nextkey_pv + prefix_len);
-    if (n_is_utf8 > 1) {
+    sv_chop(nextkey_sv,nextkey_pv + this_prefix_len);
+    if (was_latin1)
         sv_utf8_downgrade(nextkey_sv,1);
-    }
 
     RETVAL= nextkey_sv;
 }
@@ -369,91 +408,55 @@ FETCH(self_hv, key_sv)
         struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
     CODE:
 {
-    SV **svp;
-    SV *mount_rv;
-    AV *mount_av;
-    SV *mount_sv;
-
-    struct mph_obj *obj;
-
-    SV *prefix_sv;
+    dFAST_PROPS;
+    dMOUNT;
     SV *fetch_key_sv;
-    SV *fetch_key_first_sv;
-
-    IV key_rightmost_idx;
-    IV key_leftmost_idx;
-    HE *got_he;
     RETVAL= newSV(0);
 
-    got_he= hv_fetch_ent_with_keysv(self_hv,MPH_KEYSV_MOUNT,0);
-    if (!got_he)
-        croak("must be mounted to use this function");
+    GET_MOUNT_AND_OBJ(self_hv);
+    GET_FAST_PROPS(self_hv);
 
-    /* yes, yes, this is overly pedantic */
-    mount_rv= HeVAL(got_he);
-    mount_av= (AV *)SvRV(mount_rv);
-    svp= av_fetch(mount_av,MOUNT_ARRAY_MOUNT_IDX,0);
-    mount_sv= *svp;
-    obj= (struct mph_obj *)SvPV_nolen(mount_sv);
-
-    hv_fetch_sv_with_keysv(prefix_sv,self_hv,MPH_KEYSV_PREFIX,1);
-    fetch_key_sv= sv_2mortal(newSVsv(prefix_sv));
+    fetch_key_sv= sv_2mortal(newSVsv(ml->prefix_sv));
     sv_catsv(fetch_key_sv,key_sv);
 
-    hv_fetch_sv_with_keysv(fetch_key_first_sv,self_hv,MPH_KEYSV_FETCH_KEY_FIRST,1);
+    if ( !(ml->fetch_key_first && ( lookup_key(aTHX_ obj->header, fetch_key_sv, RETVAL) || ml->fetch_key_first > 1 ) ) ) {
+        IV key_rightmost_idx;
+        IV key_leftmost_idx;
 
-    if ( !(SvIV(fetch_key_first_sv) && (lookup_key(aTHX_ obj->header, fetch_key_sv, RETVAL) || SvIV(fetch_key_first_sv)>1))) {
-        SV *rightmost_idx_sv;
-        SV *leftmost_idx_sv;
-        SV **separator_svp= av_fetch(mount_av,MOUNT_ARRAY_SEPARATOR_IDX,0);
+        sv_catpvn(fetch_key_sv,&ml->separator,1);
 
-        sv_catsv(fetch_key_sv,*separator_svp);
-        hv_fetch_sv_with_keysv(leftmost_idx_sv,self_hv,MPH_KEYSV_LEFTMOST_IDX,1);
-        hv_fetch_sv_with_keysv(rightmost_idx_sv,self_hv,MPH_KEYSV_RIGHTMOST_IDX,1);
+        key_leftmost_idx= find_first_last_prefix(aTHX_ obj->header, fetch_key_sv, ml->leftmost_idx,
+            ml->rightmost_idx+1, &key_rightmost_idx);
 
-        key_leftmost_idx= find_first_last_prefix(aTHX_ obj->header, fetch_key_sv, SvIV(leftmost_idx_sv), SvIV(rightmost_idx_sv)+1,
-            &key_rightmost_idx);
         if (key_leftmost_idx >= 0) {
             HV *obj_hv= newHV();
             SV *obj_rv= newRV_noinc((SV*)obj_hv);
             HV *tie_hv= newHV();
             SV *tie_rv= newRV_noinc((SV*)tie_hv);
-            SV *key_leftmost_idx_sv;
-            SV *key_rightmost_idx_sv;
-            SV *key_fetch_key_first_sv;
             SV *key_mount_rv;
-            SV *key_level_sv;
-            SV *key_levels_sv;
-            SV *level_sv;
-            SV *levels_sv;
-
-            hv_store_ent_with_keysv(obj_hv, MPH_KEYSV_PREFIX, fetch_key_sv);
-            SvREFCNT_inc(fetch_key_sv);
-
-            hv_fetch_sv_with_keysv(key_leftmost_idx_sv,obj_hv,MPH_KEYSV_LEFTMOST_IDX,1);
-            sv_setiv(key_leftmost_idx_sv, key_leftmost_idx);
-
-            hv_fetch_sv_with_keysv(key_rightmost_idx_sv,obj_hv,MPH_KEYSV_RIGHTMOST_IDX,1);
-            sv_setiv(key_rightmost_idx_sv, key_rightmost_idx);
-
+            SV *key_fast_props_sv;
+            struct mph_multilevel *new_ml;
+            
             hv_fetch_sv_with_keysv(key_mount_rv,obj_hv,MPH_KEYSV_MOUNT,1);
             sv_setsv(key_mount_rv, mount_rv);
 
-            hv_fetch_sv_with_keysv(key_level_sv,obj_hv,MPH_KEYSV_LEVEL,1);
-            hv_fetch_sv_with_keysv(key_levels_sv,obj_hv,MPH_KEYSV_LEVELS,1);
+            hv_fetch_sv_with_keysv(key_fast_props_sv,obj_hv,MPH_KEYSV_FAST_PROPS,1);
+            sv_grow(key_fast_props_sv,sizeof(struct mph_multilevel));
+            SvCUR_set(key_fast_props_sv,sizeof(struct mph_multilevel));
+            SvPOK_on(key_fast_props_sv);
+            new_ml= (struct mph_multilevel *)SvPVX(key_fast_props_sv);
 
-            hv_fetch_sv_with_keysv(level_sv,self_hv,MPH_KEYSV_LEVEL,1);
-            hv_fetch_sv_with_keysv(levels_sv,self_hv,MPH_KEYSV_LEVELS,1);
-            sv_setiv(key_level_sv,SvIV(level_sv)+1);
-            sv_setsv(key_levels_sv,levels_sv);
-
-            hv_fetch_sv_with_keysv(key_fetch_key_first_sv,obj_hv,MPH_KEYSV_FETCH_KEY_FIRST,1);
-            sv_setiv(key_fetch_key_first_sv,
-                (SvIV(key_level_sv) == SvIV(key_levels_sv)
-                 ? 2
-                : (SvIV(key_level_sv)==1 || SvIV(key_level_sv)>SvIV(key_levels_sv))
-                   ? 1 : 0));
-
+            new_ml->prefix_sv= SvREFCNT_inc(fetch_key_sv);
+            new_ml->prefix_utf8_sv= NULL;
+            new_ml->prefix_latin1_sv= NULL;
+            new_ml->leftmost_idx= key_leftmost_idx;
+            new_ml->rightmost_idx= key_rightmost_idx;
+            new_ml->level= ml->level+1;
+            new_ml->levels= ml->levels;
+            new_ml->fetch_key_first= (new_ml->level == new_ml->levels) ? 2 :
+                                     (new_ml->level == 1 || new_ml->level > new_ml->levels) ? 1 :
+                                     0;
+            new_ml->separator= ml->separator;
 
             sv_bless(obj_rv, SvSTASH((SV *)self_hv));
 	    sv_magic((SV *)tie_hv, obj_rv, PERL_MAGIC_tied, NULL, 0);

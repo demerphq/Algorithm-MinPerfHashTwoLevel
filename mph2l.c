@@ -50,7 +50,6 @@ sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U
         SvUTF8_off(sv);
     }
 }
-UV cmp_count= 0;
 
 /* returns 1 if the string in l_sv starts with the string in r_sv */
 I32
@@ -75,7 +74,6 @@ sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
         }
     }
     l_pv= SvPV(l_sv,l_len);
-    cmp_count++;
     /* at this point, if we get here then the l_pv and r_pv are in the same encoding */
     cmp = strncmp(l_pv,r_pv,l_len < r_len ? l_len : r_len);
     return cmp < 0 ? -1
@@ -104,17 +102,10 @@ sv_prefix_cmp2(pTHX_ SV *l_sv, SV *r_sv) {
     /* NOT-REACHED */
 }
 
-
-
-
-#define dSETUP_SVS(pfx_sv)                              \
-    SV *got_sv= sv_2mortal(newSV(0));                   \
-    SV *cmp_sv= sv_2mortal(newSVsv(pfx_sv));            \
-    SV *cmp_sv_utf8= sv_2mortal(newSVsv(pfx_sv))
-
+    
 #define DEBUGF 0
 IV
-_find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, SV *got_sv, SV *cmp_sv, SV *cmp_sv_utf8)
+_find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, SV *got_sv)
 {
     U32 num_buckets = mph->num_buckets;
     struct mph_bucket *bucket;
@@ -127,14 +118,13 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
                       ? sizeof(struct mph_bucket)
                       : sizeof(struct mph_sorted_bucket));
     IV m= (cmp_val && l<r) ? l+1 : ((l+r)/2);
-    if (DEBUGF) warn("l: %ld m: %ld r: %ld !!!\n", l, m, r);
+    SV *cmp_sv= NULL;
+    SV *cmp_utf8_sv= NULL;
+    int p_is_utf8= SvUTF8(pfx_sv) ? 1 : 0;
+    
+    if (!got_sv) got_sv= sv_2mortal(newSV(0));                   
 
-    if (SvUTF8(cmp_sv_utf8))
-        sv_utf8_downgrade(cmp_sv,1);
-    else
-        sv_utf8_upgrade(cmp_sv_utf8);
-    if (SvUTF8(cmp_sv))
-        cmp_sv= NULL;
+    if (DEBUGF) warn("l: %ld m: %ld r: %ld !!!\n", l, m, r);
 
     strs= (U8 *)mph + mph->str_buf_ofs;
     /* when "cmp_val" is 0 this is the "find the leftmost case of T in a sorted list" variant
@@ -159,7 +149,29 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
         if (m>=num_buckets) croak("m is larger than last bucket! for %"SVf,pfx_sv);
         sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,mph_u8 + mph->key_flags_ofs,2,
                                  gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
-        cmp= sv_prefix_cmp3(aTHX_ got_sv, cmp_sv, cmp_sv_utf8);
+#define CMP3(cmp,got_sv,pfx_sv) STMT_START {                        \
+        int g_is_utf8= SvUTF8(got_sv) ? 1 : 0;                      \
+        if (p_is_utf8 == g_is_utf8) {                               \
+            cmp= sv_prefix_cmp3(aTHX_ got_sv, pfx_sv, pfx_sv);      \
+        } else {                                                    \
+            if (p_is_utf8) {                                        \
+                if (!cmp_utf8_sv) {                                 \
+                    cmp_utf8_sv= pfx_sv;                            \
+                    cmp_sv= sv_2mortal(newSVsv(pfx_sv));            \
+                    sv_utf8_downgrade(cmp_sv,1);                    \
+                    if (SvUTF8(cmp_sv)) cmp_sv= NULL;               \
+                }                                                   \
+            } else {                                                \
+                if (!cmp_utf8_sv) {                                 \
+                    cmp_sv= pfx_sv;                                 \
+                    cmp_utf8_sv=sv_2mortal(newSVsv(pfx_sv));        \
+                    sv_utf8_upgrade(cmp_utf8_sv);                   \
+                }                                                   \
+            }                                                       \
+            cmp= sv_prefix_cmp3(aTHX_ got_sv, cmp_sv, cmp_utf8_sv); \
+        }                                                           \
+} STMT_END
+        CMP3(cmp,got_sv,pfx_sv);
         if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
 
         if (cmp < cmp_val) {
@@ -183,7 +195,8 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
     bucket= (struct mph_bucket *)(table_start + (l * row_size));
     sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,l,mph_u8 + mph->key_flags_ofs,2,
                              gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
-    cmp= sv_prefix_cmp3(aTHX_ got_sv, cmp_sv, cmp_sv_utf8);
+
+    CMP3(cmp,got_sv,pfx_sv);
 
     if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
     return !cmp ? l : -1;
@@ -191,30 +204,27 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
 
 IV find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val)
 {
-    dSETUP_SVS(pfx_sv);
-    return _find_prefix(aTHX_ mph, pfx_sv, l, r, cmp_val, got_sv, cmp_sv, cmp_sv_utf8);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, cmp_val, NULL);
 }
 
 IV
 find_first_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r)
 {
-    dSETUP_SVS(pfx_sv);
-    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, got_sv, cmp_sv, cmp_sv_utf8);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, NULL);
 }
 
 IV
 find_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r)
 {
-    dSETUP_SVS(pfx_sv);
-    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 1, got_sv, cmp_sv, cmp_sv_utf8);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 1, NULL);
 }
 
 IV
 find_first_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, IV *last)
 {
-    dSETUP_SVS(pfx_sv);
-    IV first= _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, got_sv, cmp_sv, cmp_sv_utf8);
-    *last= first >= 0 ? _find_prefix(aTHX_ mph, pfx_sv, first, r, 1, got_sv, cmp_sv, cmp_sv_utf8) : -1;
+    SV *got_sv= sv_2mortal(newSV(0));                   
+    IV first= _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, got_sv);
+    *last= first >= 0 ? _find_prefix(aTHX_ mph, pfx_sv, first, r, 1, got_sv) : -1;
     return first;
 }
 
