@@ -17,7 +17,7 @@
 #include "str_buf.h"
 
 MPH_STATIC_INLINE void
-sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift, const U8 normalized) {
+sv_set_from_bucket_extra(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift, const int fast) {
     U8 *ptr;
     U8 is_utf8;
     if (ofs) {
@@ -33,13 +33,24 @@ sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U
     }
     /* note that sv_setpvn() will cause the sv to
      * become undef if ptr is 0 */
-    sv_setpvn((sv),ptr,len);
-    if (is_utf8 > 1) {
-        if (normalized) {
-            SvUTF8_off(sv);
-        } else {
-            sv_utf8_upgrade(sv);
+    if (fast && ptr && is_utf8 < 1) {
+        if (!SvOK(sv)) {
+            sv_upgrade(sv,SVt_PV);
+            SvLEN_set(sv,0);
+            SvPOK_on(sv);
+            SvREADONLY_on(sv);
         }
+        if (SvLEN(sv)==0) {
+            SvPV_set(sv,ptr);
+            SvCUR_set(sv,len);
+        } else {
+            sv_setpvn((sv),ptr,len);
+        }
+    } else {
+        sv_setpvn((sv),ptr,len);
+    }
+    if (is_utf8 > 1) {
+        sv_utf8_upgrade(sv);
     }
     else
     if (is_utf8) {
@@ -51,11 +62,19 @@ sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U
     }
 }
 
+MPH_STATIC_INLINE void
+sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift) {
+    sv_set_from_bucket_extra(aTHX_ sv, strs, ofs, len, idx, flags,bits, utf8_default, utf8_default_shift, 0);
+}
+
+
 /* returns 1 if the string in l_sv starts with the string in r_sv */
+MPH_STATIC_INLINE
 I32
-sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
+_sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
     STRLEN l_len;
     STRLEN r_len;
+    STRLEN min_len;
     char *l_pv;
     char *r_pv;
     I32 cmp;
@@ -74,38 +93,24 @@ sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
         }
     }
     l_pv= SvPV(l_sv,l_len);
+    min_len = l_len < r_len ? l_len : r_len;
     /* at this point, if we get here then the l_pv and r_pv are in the same encoding */
-    cmp = strncmp(l_pv,r_pv,l_len < r_len ? l_len : r_len);
-    return cmp < 0 ? -1
-                   : cmp > 0 ? 1
-                             : l_len < r_len ? -1 : 0;
+    cmp = strncmp(l_pv,r_pv,min_len);
+    if (!cmp && l_len < r_len) cmp= -1;
+    return cmp;
 }
 
 I32
-sv_prefix_cmp2(pTHX_ SV *l_sv, SV *r_sv) {
-    int l_is_utf8= SvUTF8(l_sv) ? 1 : 0;
-    int r_is_utf8= SvUTF8(r_sv) ? 1 : 0;
-    if (l_is_utf8 == r_is_utf8) {
-        return sv_prefix_cmp3(aTHX_ l_sv, r_sv, r_sv);
-    }
-    else
-    if (r_is_utf8) {
-        SV *l_sv_utf8= sv_2mortal(newSVsv(l_sv));
-        sv_utf8_upgrade(l_sv_utf8);
-        return sv_prefix_cmp3(aTHX_ l_sv_utf8, NULL, r_sv);
-    }
-    else {
-        SV *r_sv_utf8= sv_2mortal(newSVsv(r_sv));
-        sv_utf8_upgrade(r_sv_utf8);
-        return sv_prefix_cmp3(aTHX_ l_sv, r_sv, r_sv_utf8);
-    }
-    /* NOT-REACHED */
+sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8) {
+    return _sv_prefix_cmp3(aTHX_ l_sv, r_sv, r_sv_utf8);
 }
 
     
 #define DEBUGF 0
+#define FAST_SV_CONSTRUCT 0
+MPH_STATIC_INLINE
 IV
-_find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, SV *got_sv)
+_find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, SV *got_sv, IV *hard_r)
 {
     U32 num_buckets = mph->num_buckets;
     struct mph_bucket *bucket;
@@ -117,14 +122,16 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
     U32 row_size= (mph->variant == 5
                       ? sizeof(struct mph_bucket)
                       : sizeof(struct mph_sorted_bucket));
-    IV m= (cmp_val && l<r) ? l+1 : ((l+r)/2);
+    IV m= (cmp_val && l<r) ? (l+1) : (l+r)/2;
+    IV last_m= -1;
     SV *cmp_sv= NULL;
     SV *cmp_utf8_sv= NULL;
     int p_is_utf8= SvUTF8(pfx_sv) ? 1 : 0;
+    SV *tmp_sv= newSV(0);
+    if (hard_r) *hard_r= r;
     
     if (!got_sv) got_sv= sv_2mortal(newSV(0));                   
 
-    if (DEBUGF) warn("l: %ld m: %ld r: %ld !!!\n", l, m, r);
 
     strs= (U8 *)mph + mph->str_buf_ofs;
     /* when "cmp_val" is 0 this is the "find the leftmost case of T in a sorted list" variant
@@ -145,14 +152,14 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
         STRLEN got_len;
         bucket= (struct mph_bucket *)(table_start + m * row_size);
 
-        if (DEBUGF) warn("l: %ld m: %ld r: %ld\n", l, m, r);
         if (m>=num_buckets) croak("m is larger than last bucket! for %"SVf,pfx_sv);
-        sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,mph_u8 + mph->key_flags_ofs,2,
-                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
+        last_m= m;
+        sv_set_from_bucket_extra(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,mph_u8 + mph->key_flags_ofs,2,
+                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,FAST_SV_CONSTRUCT);
 #define CMP3(cmp,got_sv,pfx_sv) STMT_START {                        \
         int g_is_utf8= SvUTF8(got_sv) ? 1 : 0;                      \
         if (p_is_utf8 == g_is_utf8) {                               \
-            cmp= sv_prefix_cmp3(aTHX_ got_sv, pfx_sv, pfx_sv);      \
+            cmp= _sv_prefix_cmp3(aTHX_ got_sv, pfx_sv, pfx_sv);      \
         } else {                                                    \
             if (p_is_utf8) {                                        \
                 if (!cmp_utf8_sv) {                                 \
@@ -168,63 +175,64 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
                     sv_utf8_upgrade(cmp_utf8_sv);                   \
                 }                                                   \
             }                                                       \
-            cmp= sv_prefix_cmp3(aTHX_ got_sv, cmp_sv, cmp_utf8_sv); \
+            cmp= _sv_prefix_cmp3(aTHX_ got_sv, cmp_sv, cmp_utf8_sv); \
         }                                                           \
 } STMT_END
         CMP3(cmp,got_sv,pfx_sv);
-        if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
+        if (DEBUGF) warn("%s l:%8ld m:%8ld r:%8ld cmp: %d pfx: %"SVf"\n", cmp_val ? "final" : "first", l, m, r, cmp, pfx_sv);
 
         if (cmp < cmp_val) {
             l = m + 1;
         } else {
             r = m;
+            if (cmp && hard_r)
+                *hard_r= r;
         }
         m= (l + r) / 2;
     }
-    if (cmp_val) {
-        if (!l) return -1;
-        l -= cmp_val;
-    }
-    if (l>=num_buckets) return -1;
-    //croak("m is larger than last bucket! %"SVf,pfx_sv);
+    l -= cmp_val;
+    if (l < 0 || l >= num_buckets)
+        return -1;
 
     /* l now specifies the leftmost or rightmost position that matches the prefix,
      * but we still have to check if there actually are any elements that start with
      * the prefix, there might not be. (When there are no such items the leftmost
      * and rightmost position are the same.) */
-    bucket= (struct mph_bucket *)(table_start + (l * row_size));
-    sv_set_from_bucket(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,l,mph_u8 + mph->key_flags_ofs,2,
-                             gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,1);
+    if (l != last_m) {
+        bucket= (struct mph_bucket *)(table_start + (l * row_size));
+        sv_set_from_bucket_extra(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,l,mph_u8 + mph->key_flags_ofs,2,
+                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,FAST_SV_CONSTRUCT);
 
-    CMP3(cmp,got_sv,pfx_sv);
-
-    if (DEBUGF) warn("l: %ld m: %ld r: %ld cmp= %d cmp_val= %d\n", l, m, r, cmp, cmp_val);
+        CMP3(cmp,got_sv,pfx_sv);
+    }
+    if (DEBUGF) warn("%s l:%8ld m:%8ld cmp: %d %"SVf"\n\n", cmp_val ? "final" : "first", l, last_m, cmp,pfx_sv);
     return !cmp ? l : -1;
 }
 
 IV find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val)
 {
-    return _find_prefix(aTHX_ mph, pfx_sv, l, r, cmp_val, NULL);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, cmp_val, NULL, NULL);
 }
 
 IV
 find_first_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r)
 {
-    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, NULL);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, NULL, NULL);
 }
 
 IV
 find_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r)
 {
-    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 1, NULL);
+    return _find_prefix(aTHX_ mph, pfx_sv, l, r, 1, NULL, NULL);
 }
 
 IV
 find_first_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, IV *last)
 {
-    SV *got_sv= sv_2mortal(newSV(0));                   
-    IV first= _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, got_sv);
-    *last= first >= 0 ? _find_prefix(aTHX_ mph, pfx_sv, first, r, 1, got_sv) : -1;
+    SV *got_sv= sv_2mortal(newSV(0));
+    IV hard_r= r;
+    IV first= _find_prefix(aTHX_ mph, pfx_sv, l, r, 0, got_sv, &hard_r);
+    *last= first >= 0 ? _find_prefix(aTHX_ mph, pfx_sv, first, hard_r, 1, got_sv, NULL) : -1;
     return first;
 }
 
@@ -247,11 +255,11 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
     strs= (U8 *)mph + mph->str_buf_ofs;
     if (val_sv) {
         sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,mph_u8 + mph->val_flags_ofs,1,
-                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT,0);
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
     }
     if (key_sv) {
         sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,mph_u8 + mph->key_flags_ofs,2,
-                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,0);
+                                 gf & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT);
     }
     return 1;
 }
@@ -306,7 +314,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
             U64 gf= mph->general_flags;
             sv_set_from_bucket(aTHX_ val_sv, strs, bucket->val_ofs, bucket->val_len, index,
                                  ((U8*)mph)+mph->val_flags_ofs, 1,
-                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT,0);
+                                 gf & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
         }
         return 1;
     }

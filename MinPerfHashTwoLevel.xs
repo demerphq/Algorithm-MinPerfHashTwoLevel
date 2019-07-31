@@ -30,7 +30,7 @@ I32 setup_fast_props(pTHX_ HV *self_hv, AV *mount_av, struct sv_with_hash *keyna
     struct mph_multilevel ml;
     
     hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_PREFIX,1);
-    ml.prefix_sv= sv;
+    ml.prefix_sv= SvREFCNT_inc(sv);
     ml.prefix_utf8_sv= NULL;
     ml.prefix_latin1_sv= NULL;
 
@@ -53,6 +53,7 @@ I32 setup_fast_props(pTHX_ HV *self_hv, AV *mount_av, struct sv_with_hash *keyna
     ml.separator= SvPV_nolen(*svp)[0];
 
     sv_setpvn(fast_props_sv,(char *)&ml,sizeof(struct mph_multilevel));
+    ml.converted= 1;
 }
 
 #define dFAST_PROPS \
@@ -307,15 +308,11 @@ NEXTKEY(self_hv,...)
             FIRSTKEY = 1
     CODE:
 {
-    char separator;
     char *separator_pos;
 
-    SV *iter_idx_sv;
-    SV *rightmost_idx_sv;
     IV status;
     SV *nextkey_sv= newSV(0);
     int was_latin1= 0;
-    IV iv;
 
     STRLEN nextkey_len;
     char *nextkey_pv;
@@ -333,7 +330,12 @@ NEXTKEY(self_hv,...)
     if (ix) /* FIRSTKEY */
         ml->iter_idx= ml->leftmost_idx;
 
-    status= lookup_bucket(aTHX_ obj->header, ml->iter_idx, nextkey_sv, NULL);
+        /* fetch the next key */
+    if (ml->iter_idx <= ml->rightmost_idx)
+        status= lookup_bucket(aTHX_ obj->header, ml->iter_idx, nextkey_sv, NULL);
+    else
+        status= 0;
+
     if (!status)
         XSRETURN_UNDEF;
 
@@ -343,8 +345,13 @@ NEXTKEY(self_hv,...)
         if (!SvUTF8(ml->prefix_sv)) {
             if (!ml->prefix_utf8_sv) {
                 SV *prefix_utf8_sv;
-                hv_fetch_sv_with_keysv(prefix_utf8_sv,self_hv,MPH_KEYSV_PREFIX_UTF8,1);
-                sv_setsv(prefix_utf8_sv,ml->prefix_sv);
+                if (ml->converted) {
+                    hv_fetch_sv_with_keysv(prefix_utf8_sv,self_hv,MPH_KEYSV_PREFIX_UTF8,1);
+                    sv_setsv(prefix_utf8_sv,ml->prefix_sv);
+                    SvREFCNT_inc(prefix_utf8_sv);
+                } else {
+                    prefix_utf8_sv= newSVsv(ml->prefix_sv);
+                }
                 sv_utf8_upgrade(prefix_utf8_sv);
                 ml->prefix_utf8_sv= prefix_utf8_sv;
             }
@@ -354,8 +361,13 @@ NEXTKEY(self_hv,...)
         if (SvUTF8(ml->prefix_sv)) {
             if (!ml->prefix_latin1_sv) {
                 SV *prefix_latin1_sv;
-                hv_fetch_sv_with_keysv(prefix_latin1_sv,self_hv,MPH_KEYSV_PREFIX_LATIN1,1);
-                sv_setsv(prefix_latin1_sv,ml->prefix_sv);
+                if (ml->converted) {
+                    hv_fetch_sv_with_keysv(prefix_latin1_sv,self_hv,MPH_KEYSV_PREFIX_LATIN1,1);
+                    sv_setsv(prefix_latin1_sv,ml->prefix_sv);
+                    SvREFCNT_inc(prefix_latin1_sv);
+                } else {
+                    prefix_latin1_sv= newSVsv(ml->prefix_sv);
+                }
                 sv_utf8_downgrade(prefix_latin1_sv,1);
                 ml->prefix_latin1_sv= prefix_latin1_sv;
             }
@@ -371,16 +383,15 @@ NEXTKEY(self_hv,...)
     /* at this point prefix_sv and nextkey_sv have the same utf8ness 
      * which is why we can pass the same var into both the latin1 and utf8 slot */
 
+    /* if this key does not match */
     if (sv_prefix_cmp3(nextkey_sv,this_prefix_sv,this_prefix_sv))
         XSRETURN_UNDEF;
-
-    separator= ml->separator;
 
     nextkey_pv= SvPV_nomg(nextkey_sv, nextkey_len);
     this_prefix_pv= SvPV_nomg(this_prefix_sv, this_prefix_len);
 
     separator_pos= (this_prefix_len <= nextkey_len)
-                   ? memchr(nextkey_pv + this_prefix_len, separator, nextkey_len - this_prefix_len)
+                   ? memchr(nextkey_pv + this_prefix_len, ml->separator, nextkey_len - this_prefix_len)
                    : NULL;
 
     if (!separator_pos) {
@@ -398,6 +409,27 @@ NEXTKEY(self_hv,...)
 }
     OUTPUT:
         RETVAL
+
+void
+DESTROY(self_hv)
+        HV *self_hv
+    PREINIT:
+        dMY_CXT;
+        struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
+    CODE:
+{
+    struct mph_multilevel *ml;
+    SV *fast_props_sv= hv_delete_ent_with_keysv(self_hv, MPH_KEYSV_FAST_PROPS);
+    if (fast_props_sv) {
+        ml= (struct mph_multilevel *)SvPV_nolen(fast_props_sv);
+        if (ml->prefix_sv)
+            SvREFCNT_dec(ml->prefix_sv);
+        if (ml->prefix_utf8_sv)
+            SvREFCNT_dec(ml->prefix_utf8_sv);
+        if (ml->prefix_latin1_sv)
+            SvREFCNT_dec(ml->prefix_latin1_sv);
+    }
+}
 
 SV *
 FETCH(self_hv, key_sv)
@@ -457,6 +489,7 @@ FETCH(self_hv, key_sv)
                                      (new_ml->level == 1 || new_ml->level > new_ml->levels) ? 1 :
                                      0;
             new_ml->separator= ml->separator;
+            new_ml->converted= 0;
 
             sv_bless(obj_rv, SvSTASH((SV *)self_hv));
 	    sv_magic((SV *)tie_hv, obj_rv, PERL_MAGIC_tied, NULL, 0);

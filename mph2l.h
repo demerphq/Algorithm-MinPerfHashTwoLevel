@@ -130,16 +130,24 @@
 #endif
 
 #define hv_fetch_ent_with_keysv(hv,keysv_idx,lval)                      \
-    hv_fetch_ent(hv,keyname_sv[keysv_idx].sv,lval,keyname_sv[keysv_idx].hash);
+    hv_fetch_ent(hv,keyname_sv[keysv_idx].sv,lval,keyname_sv[keysv_idx].hash)
 
-#define hv_fetch_sv_with_keysv(sv,hv,keysv_idx,lval) STMT_START {           \
-    HE *got_he= hv_fetch_ent_with_keysv(hv,keysv_idx,lval);                 \
-    if (!got_he) croak("failed to fetch item in hv_fetch_sv_with_keysv()"); \
-    sv= HeVAL(got_he);                                                      \
+#define hv_fetch_sv_with_keysv(sv,hv,keysv_idx,lval) STMT_START {               \
+    HE *got_he= hv_fetch_ent_with_keysv(hv,keysv_idx,lval);                     \
+    if (got_he) {                                                               \
+        sv= HeVAL(got_he);                                                      \
+    } else {                                                                    \
+        if (lval) croak("failed to fetch item in hv_fetch_sv_with_keysv()");    \
+        sv= NULL;                                                               \
+    }                                                                           \
 } STMT_END
 
+#define hv_delete_ent_with_keysv(hv,keysv_idx) \
+    hv_delete_ent(hv,keyname_sv[keysv_idx].sv,0,keyname_sv[keysv_idx].hash)
+
+
 #define hv_store_ent_with_keysv(hv,keysv_idx,val_sv)                    \
-    hv_store_ent(hv,keyname_sv[keysv_idx].sv,val_sv,keyname_sv[keysv_idx].hash);
+    hv_store_ent(hv,keyname_sv[keysv_idx].sv,val_sv,keyname_sv[keysv_idx].hash)
 
 #define hv_copy_with_keysv(hv1,hv2,keysv_idx) STMT_START {              \
     HE *got_he= hv_fetch_ent_with_keysv(hv1,keysv_idx,0);               \
@@ -259,6 +267,7 @@ struct mph_multilevel {
     IV levels;
     IV fetch_key_first;
     char separator;
+    char converted;
 };
 
 #include "mph_hv_macro.h"
@@ -277,4 +286,3 @@ IV find_first_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, 
 IV find_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);
 IV find_first_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);
 I32 sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8);
-I32 sv_prefix_cmp2(pTHX_ SV *l_sv, SV *r_sv);
