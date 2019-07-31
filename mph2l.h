@@ -44,8 +44,10 @@
 #define MPH_KEYSV_LEVEL             25
 #define MPH_KEYSV_LEVELS            26
 #define MPH_KEYSV_FAST_PROPS        27
+#define MPH_KEYSV_KEYS_AV           28
+#define MPH_KEYSV_SEPARATOR         29
 
-#define COUNT_MPH_KEYSV 28
+#define COUNT_MPH_KEYSV 30
 
 #define MOUNT_ARRAY_MOUNT_IDX 0
 #define MOUNT_ARRAY_SEPARATOR_IDX 1
@@ -82,16 +84,34 @@
     MPH_INIT_KEYSV(MPH_KEYSV_PREFIX,"prefix");                  \
     MPH_INIT_KEYSV(MPH_KEYSV_PREFIX_UTF8,"prefix_utf8");        \
     MPH_INIT_KEYSV(MPH_KEYSV_PREFIX_LATIN1,"prefix_latin1");    \
-    MPH_INIT_KEYSV(MPH_KEYSV_FETCH_KEY_FIRST,"fetch_key_first");    \
-    MPH_INIT_KEYSV(MPH_KEYSV_LEVEL,"level");    \
-    MPH_INIT_KEYSV(MPH_KEYSV_LEVELS,"levels");    \
-    MPH_INIT_KEYSV(MPH_KEYSV_FAST_PROPS,"_fast_props");    \
+    MPH_INIT_KEYSV(MPH_KEYSV_FETCH_KEY_FIRST,"fetch_key_first");\
+    MPH_INIT_KEYSV(MPH_KEYSV_LEVEL,"level");                    \
+    MPH_INIT_KEYSV(MPH_KEYSV_LEVELS,"levels");                  \
+    MPH_INIT_KEYSV(MPH_KEYSV_FAST_PROPS,"_fast_props");         \
+    MPH_INIT_KEYSV(MPH_KEYSV_KEYS_AV,"_keys_av");               \
+    MPH_INIT_KEYSV(MPH_KEYSV_SEPARATOR,"separator");            \
 } STMT_END
 
 #define MPH_F_FILTER_UNDEF          (1<<0)
 #define MPH_F_DETERMINISTIC         (1<<1)
 #define MPH_F_NO_DEDUPE             (1<<2)
 #define MPH_F_VALIDATE              (1<<3)
+#define MPH_F_HASH_ONLY             (1<<4)
+
+#define MPH_F_IS_KEY                (1<<17)
+#define MPH_F_IS_VAL                (1<<18)
+#define MPH_F_COMPRESS_KEYS         (1<<19)
+#define MPH_F_COMPRESS_VALS         (1<<20)
+
+#define MPH_F_DEBUG                 (1<<31)
+
+
+#if 1
+#define MPH_HASH_FOR_FETCH 0
+#else
+#define MPH_HASH_FOR_FETCH 1
+#endif
+
 
 #define MPH_MOUNT_ERROR_OPEN_FAILED     (-1)
 #define MPH_MOUNT_ERROR_FSTAT_FAILED    (-2)
@@ -198,7 +218,7 @@ STMT_START {                                                            \
     (flags)[bytepos] |= ((v & bitmask) << shift);           \
 } STMT_END
 
-#define MAX_VARIANT 6
+#define MAX_VARIANT 7
 #define MIN_VARIANT 5
 
 struct sv_with_hash {
@@ -224,21 +244,46 @@ struct mph_header {
     union {
         U64 table_checksum;
         U64 general_flags;
+        union {
+            struct {
+                U8 utf8_flags;
+                U8 separator;
+                U16 reserved_u16;
+                U32 str_len_ofs;
+            };
+        };
     };
     union {
         U64 str_buf_checksum;
+        union {
+            U32 codepair_ofs;
+            U32 reserved_u32_1;
+        };
     };
 };
 
-#define BUCKET_FIELDS   \
-    union {             \
-        U32 xor_val;    \
-        I32 index;      \
-    };                  \
-    U32 key_ofs;        \
-    U32 val_ofs;        \
-    U16 key_len;        \
-    U16 val_len
+
+#define BUCKET_FIELDS           \
+    union {                     \
+        U32 xor_val;            \
+        I32 index;              \
+    };                          \
+    union {                     \
+        U32 key_ofs;            \
+        U32 k1_idx;             \
+    };                          \
+    union {                     \
+        U32 val_ofs;            \
+        U32 k2_idx;             \
+    };                          \
+    union {                     \
+        struct {                \
+            U16 key_len;        \
+            U16 val_len;        \
+        };                      \
+        U32 k3_idx;             \
+    }
+
 
 struct mph_bucket {
     BUCKET_FIELDS;
@@ -249,10 +294,72 @@ struct mph_sorted_bucket {
     U32 sort_index;
 };
 
+struct mph_triple_bucket {
+    BUCKET_FIELDS;
+    U32 sort_index;
+    U32 v_idx;
+    I32 n1;
+    I32 n2;
+};
+
+#define STR_LEN_PTR(mph)        ((struct str_len *)((U8 *)mph + mph->str_len_ofs))
+#define STR_BUF_PTR(mph)        ((U8 *)mph + mph->str_buf_ofs)
+#define KEY_FLAGS_PTR(mph)      ((U8 *)mph + mph->key_flags_ofs)
+#define VAL_FLAGS_PTR(mph)      ((U8 *)mph + mph->val_flags_ofs)
+#define STATE_PTR(mph)          ((U8 *)mph + mph->state_ofs)
+#define BUCKET_PTR(mph)         ((struct mph_bucket *)((U8 *)mph + mph->table_ofs))
+#define SORTED_BUCKET_PTR(mph)  ((struct mph_sorted_bucket *)((U8 *)mph + mph->table_ofs))
+#define TRIPLE_BUCKET_PTR(mph)  ((struct mph_sorted_bucket *)((U8 *)mph + mph->table_ofs))
+
+
+#define MPH_STR_LEN_HV_IDX 0
+#define MPH_STR_LEN_NEXT_IDX 1
+#define MPH_STR_LEN_UNDEF_IDX 2
+
+#define MPH_NEG(n) ((-(n))-1)
+#define MPH_FN_NEG(first_k_bucket,first_bucket,prev_bucket) MPH_NEG(prev_bucket - first_k_bucket)
+#define MPH_FN_POS(first_k_bucket,first_bucket,prev_bucket) (first_k_bucket - prev_bucket)
+
+
+struct str_len {
+    U32 ofs;
+    I32 len;
+};
+
+struct str_len_obj {
+    HV *compressed_hv;
+    HV *uncompressed_hv;
+    U32 count;
+    U32 next;
+    U32 compressed_count;
+    U32 uncompressed_count;
+    U32 longest_compressed;
+    U32 longest_uncompressed;
+    U32 longest;
+    struct compressor *compressor;
+    struct str_len *str_len;
+};
+
+
+
+#define BUCKET_SIZE(variant) (                                \
+     ((variant) == 5) ? sizeof(struct mph_bucket) :           \
+     ((variant) == 6) ? sizeof(struct mph_sorted_bucket) :    \
+                        sizeof(struct mph_triple_bucket)      \
+)
+
+
+#define mph_any_bucket mph_triple_bucket
+
+#include "mph_hv_macro.h"
+#include "mph_siphash.h"
+#include "str_buf.h"
+#include "trie2.h"
 
 struct mph_obj {
     size_t bytes;
     struct mph_header *header;
+    struct codepair_array codepair_array;
 };
 
 struct mph_multilevel {
@@ -260,29 +367,104 @@ struct mph_multilevel {
     IV leftmost_idx;
     IV rightmost_idx;
     IV bucket_count;
-    SV *prefix_sv;
-    SV *prefix_utf8_sv;
-    SV *prefix_latin1_sv;
+    union {
+        SV *prefix_sv;
+        SV *p1_sv;
+    };
+    union {
+        SV *prefix_utf8_sv;
+        SV *p1_utf8_sv;
+    };
+    union {
+        SV *prefix_latin1_sv;
+        SV *p1_latin1_sv;
+    };
     IV level;
     IV levels;
     IV fetch_key_first;
     char separator;
     char converted;
+    SV *p2_sv;
+    SV *p2_utf8_sv;
+    SV *p2_latin1_sv;
+    I32 k1_idx;
+    I32 k2_idx;
 };
 
-#include "mph_hv_macro.h"
-#include "mph_siphash.h"
 
 UV _compute_xs(pTHX_ HV *self_hv, struct sv_with_hash *keyname_sv);
 SV *_seed_state(pTHX_ SV *base_seed_sv);
 UV _hash_with_state_sv(pTHX_ SV *str_sv, SV *state_sv);
-SV *_packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv);
+SV *_packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv, AV * keys_av, SV *separator_sv);
 SV *_mount_file(SV *file_sv, SV *error_sv, U32 flags);
 void _mph_munmap(struct mph_obj *obj);
 int lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv);
 int lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv);
+
 IV find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val);
 IV find_first_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, IV *last);
 IV find_last_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);
 IV find_first_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r);
+
 I32 sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8);
+I32 sv_cmp_hash(pTHX_ SV *a, SV *b);
+
+IV triple_find_first_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, IV l, IV r);
+IV triple_find_last_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, IV l, IV r);
+IV triple_find_first_last_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, IV l, IV r, IV *last);
+
+int triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *full_key_sv, U8 *full_key_pv, STRLEN full_key_len, SV *val_sv, SV *leaf_sv);
+void triple_set_val(struct mph_obj *obj, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *val_sv);
+void triple_set_key(struct mph_obj *obj, U32 str_len_idx, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *key_sv);
+
+void sv_set_from_str_len_idx( pTHX_ SV *got_sv, struct mph_header *mph, const U32 bucket_idx, const U32 str_len_idx );
+void trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf *str_buf);
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+last_bucket_by_k1(struct mph_triple_bucket *bucket) {
+    I32 n= bucket->n1;
+    return n > 0 ? bucket + n : bucket;
+}
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+first_bucket_by_k1(struct mph_triple_bucket *bucket) {
+    I32 n;
+    struct mph_triple_bucket *last_bucket= last_bucket_by_k1(bucket);
+    n= last_bucket->n1;
+    return last_bucket + n + 1;
+}
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+last_bucket_by_k2(struct mph_triple_bucket *bucket) {
+    I32 n= bucket->n2;
+    return n > 0 ? bucket + n : bucket;
+}
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+first_bucket_by_k2(struct mph_triple_bucket *bucket) {
+    I32 n;
+    struct mph_triple_bucket *last_bucket= last_bucket_by_k2(bucket);
+    n= last_bucket->n2;
+    return last_bucket + n + 1;
+}
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+prev_bucket_by_k1(struct mph_triple_bucket *bucket) {
+    return first_bucket_by_k1(bucket) - 1;
+}
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+next_bucket_by_k1(struct mph_triple_bucket *bucket) {
+    return last_bucket_by_k1(bucket) + 1;
+}
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+prev_bucket_by_k2(struct mph_triple_bucket *bucket) {
+    return first_bucket_by_k2(bucket) - 1;
+}
+
+MPH_STATIC_INLINE struct mph_triple_bucket *
+next_bucket_by_k2(struct mph_triple_bucket *bucket) {
+    return last_bucket_by_k2(bucket) + 1;
+}
+

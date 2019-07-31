@@ -17,6 +17,9 @@ BEGIN {
        #MPH_F_DETERMINISTIC     =>  (1<<1),
        MPH_F_NO_DEDUPE          =>  (1<<2),
        #MPH_F_VALIDATE          =>  (1<<3),
+       MPH_F_COMPRESS_KEYS      =>  (1<<19),
+       MPH_F_COMPRESS_VALS      =>  (1<<20),
+       MPH_F_DEBUG              =>  (1<<31),
     );
     @xs_sub_names= qw(
         find_first_prefix
@@ -168,15 +171,28 @@ sub make_file {
     my $source_hash= $opts{source_hash}
         or die "source_hash is a mandatory option to make_file";
     $opts{comment}= "" unless defined $opts{comment};
-    $opts{variant}= $DEFAULT_VARIANT unless defined $opts{variant};
     
     my $comment= $opts{comment}||"";
     my $debug= $opts{debug} || 0;
+    if (!exists $opts{variant}) {
+        if ($class=~/MultiLevel/) {
+            $opts{variant}= 6;
+        }
+        elsif ($class=~/ThreeLevel/) {
+            $opts{variant}= 7;
+        }
+        else {
+            $opts{variant}= $DEFAULT_VARIANT;
+        }
+    }
     my $variant= int($opts{variant});
     my $deterministic;
     $deterministic //= delete $opts{canonical};
     $deterministic //= delete $opts{deterministic};
     $deterministic //= 1;
+    $deterministic =1 if $variant > 5;
+
+    my $separator= delete $opts{separator};
 
                     #1234567812345678
     $opts{seed} = "MinPerfHash2Levl"
@@ -188,6 +204,15 @@ sub make_file {
         if $deterministic;
     $compute_flags |= MPH_F_FILTER_UNDEF
         if delete $opts{filter_undef};
+
+    $compute_flags |= MPH_F_COMPRESS_KEYS
+        if delete $opts{compress_keys};
+
+    $compute_flags |= MPH_F_COMPRESS_VALS
+        if delete $opts{compress_vals};
+
+    $compute_flags |= MPH_F_DEBUG
+        if delete $opts{debug};
 
     die "Unknown variant '$variant', max known is "
         . MAX_VARIANT . " default is " . $DEFAULT_VARIANT
@@ -206,11 +231,13 @@ sub make_file {
         variant => $variant,
         compute_flags => $compute_flags,
         max_tries => $opts{max_tries},
+        separator => $separator,
     );
     my $buckets= $hasher->compute($source_hash);
     my $buf_length= $hasher->{buf_length};
     my $state= $hasher->{state};
-    my $buf= packed_xs($variant, $buf_length, $state, $comment, $compute_flags, @$buckets);
+    my $keys_av= $hasher->{_keys_av};
+    my $buf= packed_xs($variant, $buf_length, $state, $comment, $compute_flags, $separator, @$buckets, @$keys_av);
     $$seed= $hasher->get_seed if ref $seed;
 
     my $tmp_file= "$ofile.$$";
@@ -246,7 +273,7 @@ sub validate_file {
             MAGIC_STR,
             $self->get_hdr_variant,
             $self->get_hdr_num_buckets,
-            unpack("H*", $self->get_state),
+            unpack("H*", $self->get_hdr_state),
             $self->get_hdr_table_checksum,
             $self->get_hdr_str_buf_checksum,
             $self->get_comment,

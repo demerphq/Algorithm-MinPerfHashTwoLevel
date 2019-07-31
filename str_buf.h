@@ -1,3 +1,5 @@
+#ifndef _STR_BUF
+#define _STR_BUF
 struct str_buf {
     char *start;
     char *ofs_start;
@@ -17,6 +19,61 @@ str_buf_init(pTHX_ struct str_buf *str_buf, char *start, char *pos, char *end) {
     str_buf->hv= (HV*)sv_2mortal((SV*)newHV());
 }
 
+PERL_STATIC_INLINE U32
+str_buf_len(pTHX_ struct str_buf *str_buf) {
+    return str_buf->pos - str_buf->ofs_start;
+}
+
+PERL_STATIC_INLINE char *
+str_buf_aligned_alloc(pTHX_ struct str_buf *str_buf, U32 len, U32 align) {
+    U32 mod= (UV)str_buf->pos % align;
+    U32 incr= mod ? align - mod : 0;
+
+    if (str_buf->pos + len + incr < str_buf->end) {
+        char *pos;
+        str_buf->pos += incr;
+        pos= str_buf->pos;
+        str_buf->pos += len;
+        return pos;
+    } else {
+        return NULL;
+    }
+}
+
+
+PERL_STATIC_INLINE U32
+str_buf_add_from_pvn(pTHX_ struct str_buf *str_buf, char *pv, STRLEN len, const U32 flags) {
+    SV *ofs_sv= NULL;
+    U32 ofs= 0;
+
+    if (!len)
+        return 1;
+    if (len > UINT16_MAX)
+        croak("string too long!");
+    if (!(flags & MPH_F_NO_DEDUPE)) {
+        SV **ofs_svp= hv_fetch(str_buf->hv,pv,len,1); /* lvalue fetch */
+        if (!ofs_svp)
+            croak("panic: out of memory getting str ofs HE");
+        ofs_sv= *ofs_svp;
+        if (!ofs_sv)
+            croak("panic: out of memory getting str ofs SV");
+        if (SvOK(ofs_sv))
+            ofs= SvUV(ofs_sv);
+    }
+    if (!ofs) {
+        if (0) warn("str_buf adding length %-6lu '%.*s'\n",len,20,pv);
+        if (str_buf->pos + len <= str_buf->end) {
+            ofs= str_buf->pos - str_buf->ofs_start;
+            Copy(pv, str_buf->pos, len, char);
+            str_buf->pos += len;
+            if (ofs_sv)
+                sv_setuv(ofs_sv, ofs);
+        } else {
+            croak("ran out of concat space!");
+        }
+    }
+    return ofs;
+}
 
 PERL_STATIC_INLINE U32
 str_buf_add_from_sv(pTHX_ struct str_buf *str_buf, SV *sv, U16 *plen, const U32 flags) {
@@ -100,4 +157,4 @@ str_buf_finalize(pTHX_ struct str_buf *str_buf, U32 alignment, char *state) {
     return str_buf->pos - str_buf->start;
 }
 
-
+#endif /* _STR_BUF */

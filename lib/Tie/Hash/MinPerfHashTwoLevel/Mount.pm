@@ -25,7 +25,28 @@ sub new {
             die "Failed to mount file '$opts->{file}': $error";
         }
     }
-    return bless [ $mount,$opts->{separator} ], $class;
+
+    my $self= bless [ $mount,$opts->{separator} ], $class;
+    if (Tie::Hash::MinPerfHashTwoLevel::OnDisk::get_hdr_variant($self) == 7) {
+        my $hdr_sep= Tie::Hash::MinPerfHashTwoLevel::OnDisk::get_hdr_separator($self);
+        if (defined $self->[1]) {
+            if ($hdr_sep ne $self->[1]) {
+                $error= sprintf "ThreeLevel (variant 7) file has a separator of %d %s but you passed in %d %s to the constructor",
+                    ord($hdr_sep), Data::Dumper::qquote($hdr_sep), ord($self->[1]), Data::Dumper::qquote($self->[1]);
+                if ($error_rsv) {
+                    $$error_rsv = $error;
+                }
+                if ($error_rsv) {
+                    return;
+                } else {
+                    die $error;
+                }
+            }
+        } else {
+            $self->[1]= $hdr_sep;
+        }
+    }
+    return $self;
 }
 
 sub DESTROY {

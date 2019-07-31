@@ -2,63 +2,144 @@ use strict;
 use warnings;
 use blib;
 use Tie::Hash::MinPerfHashTwoLevel::OnDisk qw(mph2l_make_file);
+use Tie::Hash::MinPerfHashTwoLevel::ThreeLevelOnDisk;
 use Tie::Hash::MinPerfHashTwoLevel::MultiLevelOnDisk;
-use Sereal qw(read_sereal_file);
+use Sereal;
 use Data::Dumper;
 use Time::HiRes qw(time);
-
-my $hash_x= {
-    "a/1/A" => 0,
-    "a/1/B" => 1,
-
-    "a/2/C" => 2,
-    "a/2/D" => 3,
-    
-    "b/3/E" => 4,
-    "b/3/F" => 5,
-    
-    "b/4/G" => 6,
-    "b/4/H" => 7,
-    
-    "c/5/I" => 8,
-    "c/5/J" => 9,
-    
-    "c/6/K" => 10,
-    "c/6/L" => 11,
-};
-if (!-e "test.file") {
-    my $read_time= 0 - time();
-    read_sereal_file("../uni_prop_parser/1.tr.0a0cad65cc42f6ceafc0a7266c1f113e",{},my $hash);
-    my  @keys= sort keys %$hash;
-    #$hash->{$keys[$_]}= $keys[$_] for 0..$#keys;
-    warn "num keys: ", 0+@keys,"\n";
-    $read_time += time();
-    printf "read took %.0fms\n", $read_time;
-    my $make_time= 0 - time();
-    mph2l_make_file("test.file", variant => 6, source_hash => $hash);
-    $make_time += time();
-    printf "make file took %.0fms\n", $make_time * 1000;
-}
-my $tie_time= 0 - time();
-tie my %hash, "Tie::Hash::MinPerfHashTwoLevel::MultiLevelOnDisk", file => "test.file";
-$tie_time += time();
-printf "tie took %.0fms\n", $tie_time * 1000;
-my $loop_time= 0 - time();
 use constant SHOWIT => 0;
-foreach my $k1 (keys %hash) {
-    my $hash2= $hash{$k1};
-    SHOWIT and warn $k1,"\n";
-    foreach my $k2 (keys %$hash2) {
-        my $hash3= $hash2->{$k2};
-        SHOWIT and warn join("\t",$k1,$k2),"\n";
-        foreach my $k3 (keys %$hash3) {
-            SHOWIT and warn join("\t",$k1,$k2,$k3),"\n";
-            my $got= $hash3->{$k3};
+use Benchmark qw(cmpthese);
+use Array::RefElem qw(av_push);
+
+$|++;select((select(STDERR),$|++)[0]);
+
+sub walk_hash {
+    my ($hash1, $cmp_hash) =@_;
+    foreach my $k1 (keys %$hash1) {
+        my $hash2= $hash1->{$k1};
+        SHOWIT and warn $k1,"\n";
+        foreach my $k2 (keys %$hash2) {
+            my $hash3= $hash2->{$k2};
+            SHOWIT and warn join("\t",$k1,$k2),"\n";
+            foreach my $k3 (keys %$hash3) {
+                SHOWIT and warn join("\t",$k1,$k2,$k3),"\n";
+                my $got1= $hash3->{$k3};
+                if ($cmp_hash) {
+                    my $got2= $cmp_hash->{$k1}{$k2}{$k3};
+                    if ( defined($got1)!=defined($got2) || (defined $got1 and $got1 ne $got2)) {
+                        die "$k1/$k2/$k3 are different!\n",Dumper($got1,$got2);
+                    }
+                }
+            }
         }
     }
 }
+
+$|++;
+my %split_hash;
+my %sep_hash;
+my $read_time= 0 - time();
+my $f= "../uni_prop_parser/1.tr.0a0cad65cc42f6ceafc0a7266c1f113e";
+#$f= "../uni_prop_parser/1.tr.386e2d76e63a8b749c715b59ce43b8e5";
+#$f= "../uni_prop_parser/1.tr.711eed460fa9a8a67daafa2deb9ed6fe";
+Sereal::read_sereal_file($f,{},my $hash);
+my $_hash={
+        "a/aa/aaa"=>"aaaa",
+        "aa/aaa/aaaa"=>"aaaaa",
+        "aaa/aaaaa/aaaaaaa"=>"aaaaaaaaaaaaaaaaaaaa",
+        "b/bb/bbb"=>"bbbb",
+        "bb/bbbb/bbbbb"=>"bbbbbb",
+        "bbb/bbbbbb/bbbbb"=>"bbbb",
+};
+
+my $sep= "/";
+
+
+foreach my $key (sort keys %$hash) {
+    my $val= $hash->{$key};
+    next if !defined $val or !length $val;
+
+    my @parts= split "/", $key;
+    my ($k1,$k2,$k3)= @parts;
+    $k1//="";
+    $k2//="";
+    $k3//="";
+
+    $sep_hash{join $sep, $k1,$k2,$k3}= $val;
+    $split_hash{$k1}{$k2}{$k3}= $hash->{$key};
+}
+
+my ($class, $variant);
+if (!@ARGV or !$ARGV[0]) {
+    $class= "Tie::Hash::MinPerfHashTwoLevel::ThreeLevelOnDisk";
+    $variant= 7;
+} else {
+    $class= "Tie::Hash::MinPerfHashTwoLevel::MultiLevelOnDisk";
+    $variant= 6;
+}
+my $fn=  "test.file.$variant.mph";
+
+$read_time += time();
+printf "read took %.0fms\n", $read_time;
+my $make_time= 0 - time();
+mph2l_make_file($fn,
+    variant => $variant,
+    source_hash => \%sep_hash,
+    separator => $sep,
+    compress_keys => $ENV{COMPRESS_KEYS},
+    compress_vals => $ENV{COMPRESS_VALS},
+    debug => $ENV{DEBUG});
+$make_time += time();
+printf "make file took %.0fms\n", $make_time * 1000;
+my $tie_time= 0 - time();
+tie my %tied_hash, $class,
+    file => $fn,
+    #separator => "\0", #$sep,
+    validate => 0;
+$tie_time += time();
+printf "tie took %.0fms\n", $tie_time * 1000;
+
+
+print "walking tied hash\n";
+my $loop_time= 0 - time();
+my $hash1= \%tied_hash;
+walk_hash(\%tied_hash);
 $loop_time += time();
 printf "loop took %.0fms\n", $loop_time * 1000;
-$Data::Dumper::Useqq=1;
-print Dumper(\%hash);
+print "walking split hash checking against tied hash\n";
 
+walk_hash(\%split_hash,\%tied_hash);
+print "walking tied hash checking against split hash\n";
+walk_hash(\%tied_hash,\%split_hash);
+print "Dumping tied hash\n";
+
+$Data::Dumper::Useqq=1;
+my $dump_took= 0 - time;
+my $got1= Dumper(\%tied_hash);
+$dump_took+=time;
+print "Dumper took $dump_took for tied data\n";
+
+print "Dumping split hash\n";
+$Data::Dumper::Sortkeys= 1;
+$dump_took= 0 - time;
+my $got2= Dumper(\%split_hash);
+$dump_took += time;
+print "Dumper took $dump_took for copied data\n";
+
+if ($got1 ne $got2) {
+    print "Dumper is different!\n";
+} else {
+    print "Dumper is ok! \\o/\n";
+}
+
+if (1 or $got1 ne $got2) {
+    open my $fh1, ">", "tied.$variant.txt";
+    print $fh1 $got1;
+    close $fh1;
+    open my $fh2, ">", "split.$variant.txt";
+    print $fh2 $got2;
+    close $fh2;
+}
+
+print "$class\n";
+printf "file size: %d bytes\n", -s $fn;
