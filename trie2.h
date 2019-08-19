@@ -137,14 +137,15 @@ struct compressor {
 
 U32 codepair_array_size(struct codepair_array *codepair_array);
 U32 grow_alloc(U32 v);
-void get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb);
 void set_short_codepair(struct short_codepair *short_codepair, const U32 codea, const U32 codeb);
 void set_long_codepair(struct long_codepair *long_codepair, const U32 codea, const U32 codeb);
-void get_long_codepair(struct long_codepair *long_codepair, U32  * const codea, U32 * const codeb);
+static inline void get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb);
+static inline void get_long_codepair(struct long_codepair *long_codepair, U32  * const codea, U32 * const codeb);
+static inline void get_codepair_for_idx(struct codepair_array *codepair_array, U32 id, U32 * const codea, U32 * const codeb);
+
 U32 append_long_codepair_array(struct codepair_array *codepair_array, const U32 codea, const U32 codeb);
 U32 append_short_codepair_array(struct codepair_array *codepair_array, const U32 codea, const U32 codeb);
 U32 append_codepair_array(struct codepair_array *codepair_array, const U32 codea, const U32 codeb);
-void get_codepair_for_idx(struct codepair_array *codepair_array, U32 id, U32 * const codea, U32 * const codeb);
 U32 get_next_codepair_id(struct codepair_array *codepair_array);
 U32 codepair_array_init(struct codepair_array *codepair_array);
 U32 codepair_array_freeze(struct codepair_array *codepair_array, struct codepair_array_frozen *frozen, U32 debug);

@@ -1,7 +1,7 @@
 pm_to_blib
 blib/
-*.bs
-*.c
+MinPerfHashTwoLevel.bs
+MinPerfHashTwoLevel.c
 *.o
 MYMETA.json
 MYMETA.yml
