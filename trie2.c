@@ -21,6 +21,84 @@
 #include <stdio.h>
 #include "trie2.h"
 
+/* Part of this code implements a trie like data structure with 3 node
+ * types, a mono type, managing the transition for a single codepoint,
+ * a "small" state managing the transition for 3 codepoints, and a
+ * full state managing the transition with more than 3 codepoints.
+ * Any accepting state must be either "small" or "large".
+ * mono states are represented by a "next pointer" and a "key", accounting
+ * for 5 bytes, a small state takes 20 bytes, and a large state takes
+ * 1028 bytes. Because a trie is a directed acyclic graph we can safely
+ * upgrade nodes as we encounter them, so most nodes in the trie end up
+ * being fairly efficiently used.
+ *
+ * We use this trie structure to implement a version of LZ compression
+ * by implementing a dictionary that maps strings to ids in the dictionary.
+ * We initialize the trie and our dictionary (virtually) such that the ids
+ * 0-255 represent their relevant characters (essentially implementing identity)
+ * and 256 represents the empty string. Our dictionary is represented during
+ * compression by the state of the trie, and during decompression by a dictionary
+ * of pairs of ids, the first of which is given the id 257.
+ * We then consume our input stream using the trie to find the longest pair
+ * of strings that are known (and can thus be mapped to a pair of ids), we
+ * then "emit" the pair we found, and add the string that the codepair represents
+ * to the trie, and continue.
+ *
+ * So for instance if the first string we compress starts with "AB" then
+ * the first codepair entry (257) will be:
+ *
+ *      257: 65, 66
+ *
+ * and we would add a mapping of "AB" => 257 to the trie.
+ *
+ * If the string continued "ABAB" we would then emit:
+ *
+ *      258: 257, 257
+ *
+ * and we would add a mapping of "ABAB" => 258 to the trie.
+ *
+ * As we are encoding a set of strings and not a single stream of data we need
+ * a mechanism to specify the end of string. We could use a specific codepoint for
+ * this, and indeed normal compression occasionally requires the use of the virtual
+ * empty string codepoint 256 as the last codepoint in the sequence to ensure that
+ * the string is compressed into an even number of tokens, but adding a full on stop
+ * code ends up reducing compression performance quite a bit. Instead we reserve a
+ * single bit of the id space to denote that the codepoint is the last in a sequence.
+ *
+ * Thus if we encode "foo foo" we would get:
+ *
+ *    257: "f", "o"
+ *    258: "o", " ",
+ *    259: 257, "o"!
+ *
+ * where the exclamation point represents the stop bit. This means that if we decompress
+ * codepair 257, 258, 259 when we decode the right hand element of 259 we would notice
+ * the stop bit and not proceded to decode 260.
+ *
+ * This mechanism is complemented by adding all full strings we add to the dictionary
+ * as compressed sequences of pairs also as a single token, and we use another bit for
+ * this purpose. So lets say the next word compressed is "foo foo foo foo.", after adding
+ * "foo foo" as a above, we would also have registered a mapping of "foo foo" to 257+, where
+ * the + represents the "run to stop" flag. This would then mean "foo foo foo foo." would
+ * compress as the following sequence (again using + and ! for the relevant flags).
+ *
+ *    260: 257+," "
+ *    261: 257+,"."!
+ *
+ * And "foo foo foo foo." would be added to the dictionary as 260+. This process is repeated
+ * for all the strings we have to compress, reducing each string down to a unique identifier.
+ *
+ * For code points 0 up to 1<<22-1 we use a 6 byte (2x24 bit) representation, after which
+ * we switch to an 8 byte (2x32 bit) representation. Which gives us support for up to 2^30
+ * codepairs in theory. If you wonder why we dont support smaller size representations, the
+ * answer is that we only "waste" about 1<<16 bytes for the potentially shorter codepairs,
+*  which is not enough to justify the complexiy and performance optimisations to eliminate
+*  the wasted space. On the other hand, in my test data sets all of the compressed data
+*  fit well under the 24 bit capacity, and the larger amount of "wasted" space justifies
+*  using the 24/48 bit codepair representation.
+ *
+ */
+
 U32
 codepair_array_size(struct codepair_array *codepair_array) {
     return codepair_array->short_info.next * sizeof(struct short_codepair)
@@ -41,6 +119,8 @@ grow_alloc(U32 v) {
 static inline void
 get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb) {
     if (1) {
+        /* load the 6 bytes into a single U64 register (hopefully), then split out
+         * the low and high 24 bits */
         U64 recodeab= *((U64 *)short_codepair);
         *codea= recodeab & 0xFFFFFF;
         *codeb= (recodeab >> 24) & 0xFFFFFF;
