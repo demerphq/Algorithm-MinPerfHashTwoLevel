@@ -98,7 +98,7 @@ sub compute {
         my $state= $self->get_state; # ensure we have a state set up (must be called before compute_xs)
         delete $self->{buckets};
 
-        printf "MPH2L compute attempt #%2d/%2d for hash with %6d keys - using seed: %s (state: %s)\n",
+        warn sprintf "MPH2L compute attempt #%2d/%2d for hash with %6d keys - using seed: %s (state: %s)\n",
             $counter,
             $max_tries,
             0+keys(%$source_hash),

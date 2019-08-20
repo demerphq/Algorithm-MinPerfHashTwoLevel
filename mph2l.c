@@ -220,7 +220,6 @@ _triple_find_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, 
     IV last_m= -1;
     SV *cmp_utf8_sv= NULL;
     int p_is_utf8= SvUTF8(p1_sv) ? 1 : 0;
-    SV *tmp_sv= newSV(0);
     struct mph_triple_bucket *first_bucket;
     SV *got_sv= sv_2mortal(newSV(0));
     SV *cmp_sv= p3_sv ? p3_sv
@@ -341,7 +340,6 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
     SV *cmp_sv= NULL;
     SV *cmp_utf8_sv= NULL;
     int p_is_utf8= SvUTF8(pfx_sv) ? 1 : 0;
-    SV *tmp_sv= newSV(0);
     if (hard_r) *hard_r= r;
 
     if (!got_sv) got_sv= sv_2mortal(newSV(0));
@@ -1842,7 +1840,6 @@ RETRY:
     SvPOK_on(buf_sv);
 
     if (debug) {
-        warn("|refcount=%u\n", SvREFCNT(buf_sv));
         warn("|str_len.next: %d str_buf.len: %d with codepairs: %d\n",
                 str_len_obj->next, sblen, str_buf_len(str_buf));
         warn("|state_ofs= %u\n", head->state_ofs);
@@ -1852,7 +1849,8 @@ RETRY:
         warn("|str_len_ofs= %u\n", head->str_len_ofs);
         warn("|str_buf_ofs= %u\n", head->str_buf_ofs);
         warn("|codepairs: %u size: %u\n", next_codepair_id, codepair_frozen_size);
-        warn("|final_length= %lu\n", SvCUR(buf_sv));
+        warn("|refcount=%u\n", SvREFCNT(buf_sv));
+        warn("|final_length= %lu (alloc= %lu)\n", SvCUR(buf_sv), SvLEN(buf_sv));
     }
     return SvCUR(buf_sv);
 }

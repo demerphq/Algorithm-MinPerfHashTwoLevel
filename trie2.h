@@ -43,10 +43,12 @@ static const char *codes[4]={
 #define GET_CODE(x) ((x) >> TOP_BITS)
 #define GET_IDX(x) ((x) & IDX_MASK)
 #define STATE(code,idx) (SHIFT_CODE(code) | idx)
-#define PREALLOC        (1<<16)
-#define PREALLOC_MONO   (1<<16)
-#define PREALLOC_SMALL  (1<<10)
-#define PREALLOC_LARGE  (1<<10)
+
+#define PREALLOC            (1<<16)
+#define PREALLOC_MONO       (1<<16)
+#define PREALLOC_SMALL      (1<<10)
+#define PREALLOC_FULL       (1<<10)
+#define PREALLOC_CODEPAIR   (1<<16)
 
 #define CODEPAIR_STOP_FLAG                  (1<<0)
 #define CODEPAIR_MULTI_FLAG                 (1<<1)
@@ -138,7 +140,6 @@ struct compressor {
 };
 
 U32 codepair_array_size(struct codepair_array *codepair_array);
-U32 grow_alloc(U32 v);
 void set_short_codepair(struct short_codepair *short_codepair, const U32 codea, const U32 codeb);
 void set_long_codepair(struct long_codepair *long_codepair, const U32 codea, const U32 codeb);
 static inline void get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb);

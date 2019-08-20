@@ -105,18 +105,20 @@ codepair_array_size(struct codepair_array *codepair_array) {
           + codepair_array->long_info.next * sizeof(struct long_codepair);
 }
 
+static inline
 U32
-grow_alloc(U32 v) {
+grow_alloc(U32 v, U32 prealloc) {
     if (!v) {
-        return PREALLOC;
+        return prealloc;
     }
-    else if (v < (1<<20)) {
+    else if (v < (1<<17)) {
         return (v << 1);
     }
-    return v + (v >> 4);
+    return v + (1<<17);
 }
 
-static inline void
+static inline
+void
 get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb) {
     if (1) {
         /* load the 6 bytes into a single U64 register (hopefully), then split out
@@ -167,7 +169,7 @@ U32
 append_long_codepair_array(struct codepair_array *codepair_array, const U32 codea, const U32 codeb) {
     U32 next= codepair_array->long_info.next++;
     if (codepair_array->long_info.next >= codepair_array->long_info.allocated) {
-        U32 new_allocated= grow_alloc(codepair_array->long_info.allocated);
+        U32 new_allocated= grow_alloc(codepair_array->long_info.allocated,PREALLOC_CODEPAIR);
         Renew(codepair_array->long_pairs, new_allocated, struct long_codepair);
         codepair_array->long_info.allocated= new_allocated;
     }
@@ -179,7 +181,7 @@ U32
 append_short_codepair_array(struct codepair_array *codepair_array, const U32 codea, const U32 codeb) {
     U32 next= codepair_array->short_info.next++;
     if (codepair_array->short_info.next >= codepair_array->short_info.allocated) {
-        U32 new_allocated= grow_alloc(codepair_array->short_info.allocated);
+        U32 new_allocated= grow_alloc(codepair_array->short_info.allocated,PREALLOC_CODEPAIR);
         Renew(codepair_array->short_pairs, new_allocated, struct short_codepair);
         codepair_array->short_info.allocated= new_allocated;
     }
@@ -393,18 +395,18 @@ trie_ensure_space( struct trie *trie, STRLEN len) {
     U32 full_want= trie->full_state_info.last + len;
 
     if (mono_want >= trie->mono_state_info.allocated) {
-        U32 new_allocated= grow_alloc(mono_want);
+        U32 new_allocated= grow_alloc(mono_want,PREALLOC_MONO);
         Renew(trie->mono_state_keys, new_allocated, U8);
         Renew(trie->mono_state_trans, new_allocated, U32);
         trie->mono_state_info.allocated= new_allocated;
     }
     if (small_want >= trie->small_state_info.allocated) {
-        U32 new_allocated= grow_alloc(small_want);
+        U32 new_allocated= grow_alloc(small_want,PREALLOC_SMALL);
         Renew(trie->small_state, new_allocated, struct small_state);
         trie->small_state_info.allocated= new_allocated;
     }
     if (full_want >= trie->full_state_info.allocated) {
-        U32 new_allocated= grow_alloc(full_want);
+        U32 new_allocated= grow_alloc(full_want,PREALLOC_FULL);
         Renew(trie->full_state, new_allocated, struct full_state);
         trie->full_state_info.allocated= new_allocated;
     }
@@ -738,10 +740,10 @@ trie_init( struct trie *trie) {
     Newxz(trie->small_state, PREALLOC_SMALL, struct small_state);
     trie->small_state_info.allocated= PREALLOC_SMALL;
 
-    Newxz(trie->full_state, PREALLOC_LARGE, struct full_state);
+    Newxz(trie->full_state, PREALLOC_FULL, struct full_state);
     trie->full_state_info.next= 1;
     trie->full_state_info.last= 1;
-    trie->full_state_info.allocated= PREALLOC_LARGE;
+    trie->full_state_info.allocated= PREALLOC_FULL;
     trie->states= 1;
 
     trie->first_state= SHIFT_CODE(CODE_FULL);

@@ -81,9 +81,10 @@ if (!@ARGV or !$ARGV[0]) {
 my $fn=  "test.file.$variant.mph";
 
 $read_time += time();
-printf "read took %.0fms\n", $read_time;
+warn sprintf "read took %.0fms\n", $read_time;
 foreach my $i (1..($ENV{LEAK_TEST_COUNT}||1)) {
-    print "-start------------------------------------------------------\n";
+    warn "-start------------------------------------------------------\n";
+    m!perl author_tools/t.pl! and warn $_ for `ps auwx`;
     my $make_time= 0 - time();
     mph2l_make_file($fn,
         variant => $variant,
@@ -93,7 +94,8 @@ foreach my $i (1..($ENV{LEAK_TEST_COUNT}||1)) {
         compress_vals => $ENV{COMPRESS_VALS},
         debug => $ENV{DEBUG});
     $make_time += time();
-    printf "make file took %.0fms\n", $make_time * 1000;
+    warn sprintf "make file took %.0fms\n", $make_time * 1000;
+    m!perl author_tools/t.pl! and warn $_ for `ps auwx`;
     print "-end------------------------------------------------------\n";
 }
 exit if $ENV{LEAK_TEST_COUNT};
@@ -103,34 +105,34 @@ tie my %tied_hash, $class,
     #separator => "\0", #$sep,
     validate => 0;
 $tie_time += time();
-printf "tie took %.0fms\n", $tie_time * 1000;
+warn sprintf "tie took %.0fms\n", $tie_time * 1000;
 
 
-print "walking tied hash\n";
+warn "walking tied hash\n";
 my $loop_time= 0 - time();
 my $hash1= \%tied_hash;
 walk_hash(\%tied_hash);
 $loop_time += time();
-printf "loop took %.0fms\n", $loop_time * 1000;
-print "walking split hash checking against tied hash\n";
+warn sprintf "loop took %.0fms\n", $loop_time * 1000;
+warn "walking split hash checking against tied hash\n";
 
 walk_hash(\%split_hash,\%tied_hash);
-print "walking tied hash checking against split hash\n";
+warn "walking tied hash checking against split hash\n";
 walk_hash(\%tied_hash,\%split_hash);
-print "Dumping tied hash\n";
+warn "Dumping tied hash\n";
 
 $Data::Dumper::Useqq=1;
 my $dump_took= 0 - time;
 my $got1= Dumper(\%tied_hash);
 $dump_took+=time;
-print "Dumper took $dump_took for tied data\n";
+warn "Dumper took $dump_took for tied data\n";
 
-print "Dumping split hash\n";
+warn "Dumping split hash\n";
 $Data::Dumper::Sortkeys= 1;
 $dump_took= 0 - time;
 my $got2= Dumper(\%split_hash);
 $dump_took += time;
-print "Dumper took $dump_took for copied data\n";
+warn "Dumper took $dump_took for copied data\n";
 
 if ($got1 ne $got2) {
     print "Dumper is different!\n";
@@ -147,5 +149,5 @@ if (1 or $got1 ne $got2) {
     close $fh2;
 }
 
-print "$class\n";
-printf "file size: %d bytes\n", -s $fn;
+warn "$class\n";
+warn sprintf "file size: %d bytes\n", -s $fn;

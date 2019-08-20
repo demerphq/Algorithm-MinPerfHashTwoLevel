@@ -227,6 +227,8 @@ sub make_file {
     my $buf;
     {
         my $seed= $opts{seed};
+        m!perl author_tools/t.pl! and print for `ps auwx`;
+        warn "starting compile\n" if $debug;
         my $hasher= Algorithm::MinPerfHashTwoLevel->new(
             debug => $debug,
             seed => (ref $seed ? $$seed : $seed),
@@ -236,10 +238,16 @@ sub make_file {
             separator => $separator,
         );
         my $buckets= $hasher->compute($source_hash);
+        warn "finished compile\n" if $debug;
+
         my $buf_length= $hasher->{buf_length};
         my $state= $hasher->{state};
         my $keys_av= $hasher->{_keys_av};
+        warn "starting packed_xs\n" if $debug;
+        m!perl author_tools/t.pl! and print for `ps auwx`;
         my $bytes= packed_xs($buf, $variant, $buf_length, $state, $comment, $compute_flags, $separator, @$buckets, @$keys_av);
+        m!perl author_tools/t.pl! and print for `ps auwx`;
+        warn "finished packed_xs\n" if $debug;
         $$seed= $hasher->get_seed if ref $seed;
         printf "packed file is %d bytes\n", $bytes if $debug;
     }
