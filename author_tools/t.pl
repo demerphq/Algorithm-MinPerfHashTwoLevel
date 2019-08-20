@@ -42,15 +42,16 @@ my $read_time= 0 - time();
 my $f= "../uni_prop_parser/1.tr.0a0cad65cc42f6ceafc0a7266c1f113e";
 #$f= "../uni_prop_parser/1.tr.386e2d76e63a8b749c715b59ce43b8e5";
 #$f= "../uni_prop_parser/1.tr.711eed460fa9a8a67daafa2deb9ed6fe";
-Sereal::read_sereal_file($f,{},my $hash);
-my $_hash={
+my $hash;
+$hash= {
         "a/aa/aaa"=>"aaaa",
         "aa/aaa/aaaa"=>"aaaaa",
         "aaa/aaaaa/aaaaaaa"=>"aaaaaaaaaaaaaaaaaaaa",
         "b/bb/bbb"=>"bbbb",
         "bb/bbbb/bbbbb"=>"bbbbbb",
         "bbb/bbbbbb/bbbbb"=>"bbbb",
-};
+} if 0;
+Sereal::read_sereal_file($f,{},$hash) unless $hash;
 
 my $sep= "/";
 
@@ -81,16 +82,21 @@ my $fn=  "test.file.$variant.mph";
 
 $read_time += time();
 printf "read took %.0fms\n", $read_time;
-my $make_time= 0 - time();
-mph2l_make_file($fn,
-    variant => $variant,
-    source_hash => \%sep_hash,
-    separator => $sep,
-    compress_keys => $ENV{COMPRESS_KEYS},
-    compress_vals => $ENV{COMPRESS_VALS},
-    debug => $ENV{DEBUG});
-$make_time += time();
-printf "make file took %.0fms\n", $make_time * 1000;
+foreach my $i (1..($ENV{LEAK_TEST_COUNT}||1)) {
+    print "-start------------------------------------------------------\n";
+    my $make_time= 0 - time();
+    mph2l_make_file($fn,
+        variant => $variant,
+        source_hash => \%sep_hash,
+        separator => $sep,
+        compress_keys => $ENV{COMPRESS_KEYS},
+        compress_vals => $ENV{COMPRESS_VALS},
+        debug => $ENV{DEBUG});
+    $make_time += time();
+    printf "make file took %.0fms\n", $make_time * 1000;
+    print "-end------------------------------------------------------\n";
+}
+exit if $ENV{LEAK_TEST_COUNT};
 my $tie_time= 0 - time();
 tie my %tied_hash, $class,
     file => $fn,

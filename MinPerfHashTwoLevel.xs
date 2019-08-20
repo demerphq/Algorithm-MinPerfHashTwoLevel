@@ -147,8 +147,9 @@ compute_xs(self_hv)
 
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::OnDisk
 
-SV *
-packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,separator_sv,buckets_av,keys_av)
+IV
+packed_xs(buf_sv, variant, buf_length_sv, state_sv,comment_sv,flags,separator_sv,buckets_av,keys_av)
+        SV *buf_sv
         U32 variant
         SV* buf_length_sv
         SV* state_sv
@@ -160,10 +161,11 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,separator_sv,buckets_a
     PREINIT:
         dMY_CXT;
         struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
-    PROTOTYPE: $$$$$$\@\@
+    PROTOTYPE: $$$$$$$\@\@
     CODE:
 {
-    RETVAL= _packed_xs(variant, buf_length_sv, state_sv, comment_sv, flags, buckets_av, keyname_sv, keys_av, separator_sv);
+    RETVAL= _packed_xs(
+        aTHX_ buf_sv, variant, buf_length_sv, state_sv, comment_sv, flags, buckets_av, keyname_sv, keys_av, separator_sv);
 }
     OUTPUT:
         RETVAL

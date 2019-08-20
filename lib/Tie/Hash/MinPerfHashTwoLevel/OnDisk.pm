@@ -224,21 +224,25 @@ sub make_file {
     die "comment cannot contain null"
         if index($comment,"\0") >= 0;
 
-    my $seed= $opts{seed};
-    my $hasher= Algorithm::MinPerfHashTwoLevel->new(
-        debug => $debug,
-        seed => (ref $seed ? $$seed : $seed),
-        variant => $variant,
-        compute_flags => $compute_flags,
-        max_tries => $opts{max_tries},
-        separator => $separator,
-    );
-    my $buckets= $hasher->compute($source_hash);
-    my $buf_length= $hasher->{buf_length};
-    my $state= $hasher->{state};
-    my $keys_av= $hasher->{_keys_av};
-    my $buf= packed_xs($variant, $buf_length, $state, $comment, $compute_flags, $separator, @$buckets, @$keys_av);
-    $$seed= $hasher->get_seed if ref $seed;
+    my $buf;
+    {
+        my $seed= $opts{seed};
+        my $hasher= Algorithm::MinPerfHashTwoLevel->new(
+            debug => $debug,
+            seed => (ref $seed ? $$seed : $seed),
+            variant => $variant,
+            compute_flags => $compute_flags,
+            max_tries => $opts{max_tries},
+            separator => $separator,
+        );
+        my $buckets= $hasher->compute($source_hash);
+        my $buf_length= $hasher->{buf_length};
+        my $state= $hasher->{state};
+        my $keys_av= $hasher->{_keys_av};
+        my $bytes= packed_xs($buf, $variant, $buf_length, $state, $comment, $compute_flags, $separator, @$buckets, @$keys_av);
+        $$seed= $hasher->get_seed if ref $seed;
+        printf "packed file is %d bytes\n", $bytes if $debug;
+    }
 
     my $tmp_file= "$ofile.$$";
     open my $ofh, ">", $tmp_file
@@ -249,7 +253,9 @@ sub make_file {
         or die "failed to close '$tmp_file': $!";
     rename $tmp_file, $ofile
         or die "failed to rename '$tmp_file' to '$ofile': $!";
+    undef $buf;
     return $ofile;
+    1;
 }
 
 sub validate_file {

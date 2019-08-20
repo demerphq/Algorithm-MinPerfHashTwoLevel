@@ -768,6 +768,8 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
         if (!SvOK(val_sv) && (compute_flags & MPH_F_FILTER_UNDEF)) continue;
 
         hv= newHV();
+        av_push(keys_av,newRV_noinc((SV*)hv));
+
         val_normalized_sv= newSV(0);
         val_is_utf8_sv= newSVuv(0);
 
@@ -783,7 +785,6 @@ normalize_source_hash(pTHX_ HV *source_hv, AV *keys_av, U32 compute_flags, SV *b
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_NORMALIZED, val_normalized_sv);
         hv_store_ent_with_keysv(hv,MPH_KEYSV_VAL_IS_UTF8,    val_is_utf8_sv);
         /* install everything into the keys_av just in case normalize_with_flags() dies */
-        av_push(keys_av,newRV_noinc((SV*)hv));
 
         buf_length += normalize_with_flags(aTHX_ key_sv, key_normalized_sv, key_is_utf8_sv, 1);
         buf_length += normalize_with_flags(aTHX_ val_sv, val_normalized_sv, val_is_utf8_sv, 0);
@@ -1487,8 +1488,8 @@ sv_cmp_len_asc_lex_asc(pTHX_ SV * const a, SV * const b) {
 }
 
 
-SV *
-_packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv, AV* keys_av, SV *separator_sv)
+IV
+_packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv, AV* keys_av, SV *separator_sv)
 {
     U32 buf_length= SvUV(buf_length_sv);
     U32 bucket_count= av_top_index(buckets_av) + 1;
@@ -1509,7 +1510,6 @@ _packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 fla
                             alignment );
 
     U32 total_size;
-    SV *sv_buf;
     char *start;
     char *end_pos;
     struct compressor compressor;
@@ -1588,10 +1588,10 @@ _packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 fla
         + 1024                  /* for good measure */
     ;
 
-    sv_buf= newSV(total_size);
-    SvPOK_on(sv_buf);
-    SvCUR_set(sv_buf,total_size);
-    start= SvPVX(sv_buf);
+    sv_grow(buf_sv,total_size);
+    SvPOK_on(buf_sv);
+    SvCUR_set(buf_sv,total_size);
+    start= SvPVX(buf_sv);
     Zero(start,total_size,char);
     head= (struct mph_header *)start;
 
@@ -1838,9 +1838,11 @@ RETRY:
         next_codepair_id= frozen->next_codepair_id;
         compressor_free(&compressor);
     }
-    SvCUR_set(sv_buf, str_buf_finalize(aTHX_ str_buf, alignment, state));
-    SvPOK_on(sv_buf);
+    SvCUR_set(buf_sv, str_buf_finalize(aTHX_ str_buf, alignment, state));
+    SvPOK_on(buf_sv);
+
     if (debug) {
+        warn("|refcount=%u\n", SvREFCNT(buf_sv));
         warn("|str_len.next: %d str_buf.len: %d with codepairs: %d\n",
                 str_len_obj->next, sblen, str_buf_len(str_buf));
         warn("|state_ofs= %u\n", head->state_ofs);
@@ -1850,9 +1852,9 @@ RETRY:
         warn("|str_len_ofs= %u\n", head->str_len_ofs);
         warn("|str_buf_ofs= %u\n", head->str_buf_ofs);
         warn("|codepairs: %u size: %u\n", next_codepair_id, codepair_frozen_size);
-        warn("|final_length= %lu\n", SvCUR(sv_buf));
+        warn("|final_length= %lu\n", SvCUR(buf_sv));
     }
-    return sv_buf;
+    return SvCUR(buf_sv);
 }
 
 
@@ -1933,7 +1935,7 @@ trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf* str_buf ) {
         } else {
             U32 o;
             for (o=0; o <= str_len - NGRAM_LEN; o++) {
-                fast_hash= ((U32 *)str_pv+o)[0] & 0xFFFFFF; /* little endian x86 */
+                fast_hash= *((U32 *)(str_pv+o)) & 0xFFFFFF; /* little endian x86 */
                 //fast_hash += ( (U32)str_pv[o+2] << 16 );
                 //fast_hash += ( (U32)str_pv[o+1] <<  8 );
                 //fast_hash += ( (U32)str_pv[o+0] <<  0 );
@@ -2028,7 +2030,6 @@ trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf* str_buf ) {
         }
 
         if (do_add) {
-
           do_add:
             idx_sv= newSViv(i);
 
@@ -2046,6 +2047,7 @@ trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf* str_buf ) {
                 }
             }
             SvREFCNT_dec(idx_sv);
+
         }
     }
 }

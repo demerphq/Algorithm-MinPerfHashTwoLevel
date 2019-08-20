@@ -43,7 +43,10 @@ static const char *codes[4]={
 #define GET_CODE(x) ((x) >> TOP_BITS)
 #define GET_IDX(x) ((x) & IDX_MASK)
 #define STATE(code,idx) (SHIFT_CODE(code) | idx)
-#define PREALLOC (1<<17)
+#define PREALLOC        (1<<16)
+#define PREALLOC_MONO   (1<<16)
+#define PREALLOC_SMALL  (1<<10)
+#define PREALLOC_LARGE  (1<<10)
 
 #define CODEPAIR_STOP_FLAG                  (1<<0)
 #define CODEPAIR_MULTI_FLAG                 (1<<1)
@@ -127,7 +130,6 @@ struct codepair_array {
     struct long_codepair *long_pairs;
     struct codepair_array_frozen *frozen_source;
     IV last_decode_cpid;
-    SV *last_decode_cpid_sv;
 };
 
 struct compressor {

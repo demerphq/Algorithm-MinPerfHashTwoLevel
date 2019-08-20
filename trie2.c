@@ -217,8 +217,8 @@ get_next_codepair_id(struct codepair_array *codepair_array) {
 U32
 codepair_array_init(struct codepair_array *codepair_array) {
     Zero(codepair_array,1,struct codepair_array);
-    Newxz(codepair_array->long_pairs,PREALLOC,struct long_codepair);
-    codepair_array->long_info.allocated= PREALLOC;
+    Newxz(codepair_array->short_pairs,PREALLOC,struct short_codepair);
+    codepair_array->short_info.allocated= PREALLOC;
     codepair_array->next_codepair_id= FIRST_CODEPAIR_IDX;
 }
 
@@ -272,7 +272,6 @@ codepair_array_unfreeze(struct codepair_array *codepair_array, struct codepair_a
     if (frozen->long_info_next)
         codepair_array->long_pairs= (struct long_codepair *)(frozen->data + frozen->short_bytes);
     codepair_array->last_decode_cpid=-1;
-    codepair_array->last_decode_cpid_sv= NULL;
 }
 
 
@@ -732,17 +731,17 @@ trie_init( struct trie *trie) {
     U32 i;
     Zero(trie,1,struct trie);
 
-    Newxz(trie->mono_state_keys,PREALLOC, U8);
-    Newxz(trie->mono_state_trans,PREALLOC, U32);
-    trie->mono_state_info.allocated= PREALLOC;
+    Newxz(trie->mono_state_keys,PREALLOC_MONO, U8);
+    Newxz(trie->mono_state_trans,PREALLOC_MONO, U32);
+    trie->mono_state_info.allocated= PREALLOC_MONO;
 
-    Newxz(trie->small_state, PREALLOC, struct small_state);
-    trie->small_state_info.allocated= PREALLOC;
+    Newxz(trie->small_state, PREALLOC_SMALL, struct small_state);
+    trie->small_state_info.allocated= PREALLOC_SMALL;
 
-    Newxz(trie->full_state, PREALLOC, struct full_state);
+    Newxz(trie->full_state, PREALLOC_LARGE, struct full_state);
     trie->full_state_info.next= 1;
     trie->full_state_info.last= 1;
-    trie->full_state_info.allocated= PREALLOC;
+    trie->full_state_info.allocated= PREALLOC_LARGE;
     trie->states= 1;
 
     trie->first_state= SHIFT_CODE(CODE_FULL);
@@ -763,8 +762,10 @@ trie_free( struct trie *trie) {
 
 void
 codepair_array_free( struct codepair_array *codepair_array) {
-    Safefree(codepair_array->long_pairs);
-    Safefree(codepair_array->short_pairs);
+    if (codepair_array->long_pairs)
+        Safefree(codepair_array->long_pairs);
+    if (codepair_array->short_pairs)
+        Safefree(codepair_array->short_pairs);
     Zero(codepair_array,1,struct codepair_array);
 }
 

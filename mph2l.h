@@ -395,7 +395,7 @@ struct mph_multilevel {
 UV _compute_xs(pTHX_ HV *self_hv, struct sv_with_hash *keyname_sv);
 SV *_seed_state(pTHX_ SV *base_seed_sv);
 UV _hash_with_state_sv(pTHX_ SV *str_sv, SV *state_sv);
-SV *_packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv, AV * keys_av, SV *separator_sv);
+IV _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv, AV * keys_av, SV *separator_sv);
 SV *_mount_file(SV *file_sv, SV *error_sv, U32 flags);
 void _mph_munmap(struct mph_obj *obj);
 int lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv);
