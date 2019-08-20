@@ -100,8 +100,9 @@ Tie::Hash::MinPerfHashTwoLevel::ThreeLevelOnDisk - construct or tie a "two level
     file => $some_file,
     source_hash => $some_hash,
     comment => "this is a comment",
-    compress_keys => $bool,
-    compress_vals => $bool,
+    compress_keys => 0,
+    compress_vals => 1,
+    separator => "/",                   # MANDATORY!
     debug => 0,
   );
 
@@ -166,15 +167,6 @@ Thus both of the following are valid:
 Speed up construction at the cost of a larger string buffer by disabling
 deduplication of values and keys.  Same as setting the MPH_F_NO_DEDUPE bit
 in compute_flags.
-
-=item deterministic
-
-=item canonical
-
-Produce a canonical result from the source data set, albeit somewhat less quickly
-than normal. Note this is independent of supplying a seed, the same seed may produce
-a different result for the same set of keys without this option.  Same
-as setting the MPH_F_DETERMINISTIC bit in compute_flags.
 
 =item filter_undef
 
