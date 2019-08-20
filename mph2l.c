@@ -1396,6 +1396,8 @@ str_len_add(pTHX_ struct str_len_obj *str_len_obj, struct str_buf *str_buf, char
     U32 ofs;
     U32 compress;
 
+    if (!pv) return 0; /* str_len == 0 is reserved for undef and str_buf=NULL means undef */
+
     if (flags & MPH_F_IS_KEY) {
         compress= flags & MPH_F_COMPRESS_KEYS;
     } else {
@@ -1672,7 +1674,7 @@ RETRY:
             SV *val_normalized_sv= HeVAL(val_normalized_he);
             struct mph_triple_bucket *bucket= (struct mph_triple_bucket *)(table + (i * bucket_size));
 
-            pvv= SvPV_nomg(val_normalized_sv,vl);
+            pvv= SvOK(val_normalized_sv) ? SvPV_nomg(val_normalized_sv,vl) : 0;
             pv1= SvPV_nomg(key_normalized_sv,kl);
 
             kend= pv1+kl;

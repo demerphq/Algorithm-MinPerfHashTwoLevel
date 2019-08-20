@@ -57,7 +57,7 @@ my $sep= "/";
 
 foreach my $key (sort keys %$hash) {
     my $val= $hash->{$key};
-    next if !defined $val or !length $val;
+    #next if !defined $val or !length $val;
 
     my @parts= split "/", $key;
     my ($k1,$k2,$k3)= @parts;
