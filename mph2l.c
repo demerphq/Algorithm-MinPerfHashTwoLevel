@@ -1582,8 +1582,10 @@ _packed_xs(U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 fla
         + table_rlen
         + key_flags_rlen
         + val_flags_rlen
-        + str_len_rlen         /* new in variant 7 */
+        + str_len_rlen          /* new in variant 7 */
         + str_rlen
+        + sizeof(compressor)
+        + 1024                  /* for good measure */
     ;
 
     sv_buf= newSV(total_size);
@@ -1829,7 +1831,7 @@ RETRY:
         sblen= str_buf_len(str_buf);
         frozen_pv= str_buf_aligned_alloc(str_buf,codepair_frozen_size,8);
         if (!frozen_pv)
-            croak("not enough memory?");
+            croak("not enough memory? need codepair_frozen_size: %u", codepair_frozen_size);
         head->codepair_ofs= frozen_pv - start;
         frozen= (struct codepair_array_frozen *)frozen_pv;
         codepair_array_freeze(&compressor.codepair_array,frozen,debug);
