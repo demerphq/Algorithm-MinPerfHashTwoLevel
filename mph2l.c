@@ -363,7 +363,7 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
         STRLEN got_len;
         bucket= (struct mph_bucket *)(table_start + m * bucket_size);
 
-        if (m>=num_buckets) croak("m is larger than last bucket! for key '%"SVf"' l=%d m=%d r=%d\n",pfx_sv,l,m,r);
+        if (m>=num_buckets) croak("m is larger than last bucket! for key '%"SVf"' l=%ld m=%ld r=%ld\n",pfx_sv,l,m,r);
         last_m= m;
         sv_set_from_bucket_extra(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,mph_u8 + mph->key_flags_ofs,2,
                                  utf8_flags & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,FAST_SV_CONSTRUCT);
@@ -1130,8 +1130,8 @@ sv_cmp_hash_with_sep(pTHX_ SV *a, SV *b) {
     {
         U8 *a_pv2= memchr(a_pv1, separator, a_end - a_pv1);
         U8 *b_pv2= memchr(b_pv1, separator, b_end - b_pv1);
-        if (!a_pv2) croak("missing first separator in '%.*s'", a_len, a_pv1);
-        if (!b_pv2) croak("missing first separator in '%.*s'", b_len, b_pv1);
+        if (!a_pv2) croak("missing first separator in '%.*s'", (int)a_len, a_pv1);
+        if (!b_pv2) croak("missing first separator in '%.*s'", (int)b_len, b_pv1);
         sv_setpvn(MPH_CMP_A_SV, a_pv1, a_pv2 - a_pv1);
         sv_setpvn(MPH_CMP_B_SV, b_pv1, b_pv2 - b_pv1);
         diff = sv_cmp(MPH_CMP_A_SV,MPH_CMP_B_SV);
@@ -1141,8 +1141,8 @@ sv_cmp_hash_with_sep(pTHX_ SV *a, SV *b) {
         if (!diff) {
             U8 *a_pv3= memchr(a_pv2, separator, a_end - a_pv2);
             U8 *b_pv3= memchr(b_pv2, separator, b_end - b_pv2);
-            if (!a_pv3) croak("missing first separator in '%.*s'", a_len, a_pv1);
-            if (!b_pv3) croak("missing first separator in '%.*s'", b_len, b_pv1);
+            if (!a_pv3) croak("missing first separator in '%.*s'", (int)a_len, a_pv1);
+            if (!b_pv3) croak("missing first separator in '%.*s'", (int)b_len, b_pv1);
             sv_setpvn(MPH_CMP_A_SV, a_pv2, a_pv3 - a_pv2);
             sv_setpvn(MPH_CMP_B_SV, b_pv2, b_pv3 - b_pv2);
             a_pv3++;
@@ -1679,7 +1679,7 @@ RETRY:
 
             kend= pv1+kl;
             pv2= memchr(pv1,separator,kend-pv1);
-            if (!pv2) croak("no separator in key! %"SVf" len: %u", key_normalized_sv, kl);
+            if (!pv2) croak("no separator in key! %"SVf" len: %lu", key_normalized_sv, kl);
             l1= pv2 - pv1;
             pv2++;
             pv3= memchr(pv2,separator,kend-pv2);
@@ -1707,7 +1707,7 @@ RETRY:
                 UV u= SvUV(HeVAL(key_is_utf8_he));
                 SETBITS(u,key_flags,i,2);
             } else {
-                croak("panic: out of memory? no key_is_utf8_he for %u",i);
+                croak("panic: out of memory? no key_is_utf8_he for %ld",i);
             }
         }
         if ( val_is_utf8_generic < 0 ) {
@@ -1716,7 +1716,7 @@ RETRY:
                 UV u= SvUV(HeVAL(val_is_utf8_he));
                 SETBITS(u,val_flags,i,1);
             } else {
-                croak("panic: out of memory? no val_is_utf8_he for %u",i);
+                croak("panic: out of memory? no val_is_utf8_he for %ld",i);
             }
         }
     }
