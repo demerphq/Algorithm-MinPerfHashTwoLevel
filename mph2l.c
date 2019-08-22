@@ -1540,6 +1540,7 @@ _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* c
     U32 str_len_rlen= 0;
     U32 pass = 0;
     U32 debug= flags & MPH_F_DEBUG;
+    U32 debug_more= flags & MPH_F_DEBUG_MORE;
 
     for (i= 0; i < bucket_count; i++) {
         SV **got= av_fetch(buckets_av,i,0);
@@ -1644,7 +1645,7 @@ _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* c
      * in a known order. */
 RETRY:
     pass++;
-    if (debug) warn("|pass #%d\n",pass);
+    if (debug_more) warn("|pass #%d\n",pass);
     if (variant < 7) {
         str_buf_init(str_buf, start, start + head->str_buf_ofs, start + total_size);
         str_buf_add_from_sv(aTHX_ str_buf,comment_sv,NULL,0);
@@ -1745,13 +1746,13 @@ RETRY:
                     av_push(uncompressed_av, key);
                 }
                 str_count= av_top_index(uncompressed_av)+1;
-                if (debug) {
+                if (debug_more) {
                     warn("|uncompressed strings: %ld\n",str_count);
                     warn("|Starting trigram overlap detection.\n");
                 }
 
                 (void)trigram_add_strs_from_av(aTHX_ uncompressed_av, str_buf);
-                if (debug)
+                if (debug_more)
                     warn("|Adding to str_len structure.\n");
                 /* now add the string to the str_len in alphabetical order
                  * this makes our key tables have pleasing properties */
@@ -1812,7 +1813,7 @@ RETRY:
                     }
                 }
             }
-            if (debug)
+            if (debug_more)
                 str_len_obj_dump(str_len_obj);
 
         } /*second pass*/
@@ -1839,7 +1840,7 @@ RETRY:
     SvCUR_set(buf_sv, str_buf_finalize(aTHX_ str_buf, alignment, state));
     SvPOK_on(buf_sv);
 
-    if (debug) {
+    if (debug_more) {
         warn("|str_len.next: %d str_buf.len: %d with codepairs: %d\n",
                 str_len_obj->next, sblen, str_buf_len(str_buf));
         warn("|state_ofs= %u\n", head->state_ofs);

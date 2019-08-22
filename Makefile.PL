@@ -17,6 +17,8 @@ die "requires 64-bit integer support (little-endian)\n"
     };
 # See lib/ExtUtils/MakeMaker.pm for details of how to influence
 # the contents of the Makefile that is written.
+my $OPTIMIZE          = $ENV{OPTIMIZE} ? $ENV{OPTIMIZE} : $ENV{DEBUG} ? '-g' : '-O3';
+print "optimization level: $OPTIMIZE\n";
 WriteMakefile(
     NAME              => 'Algorithm::MinPerfHashTwoLevel',
     VERSION_FROM      => 'lib/Algorithm/MinPerfHashTwoLevel.pm', # finds $VERSION
@@ -28,8 +30,7 @@ WriteMakefile(
     LICENSE           => 'perl',
     DEFINE            => '', # e.g., '-DHAVE_SOMETHING'
     INC               => '-I.', # e.g., '-I. -I/usr/include/other'
-    #OPTIMIZE          => '-O3',
-    OPTIMIZE          => '-g',
+    OPTIMIZE          => $OPTIMIZE,
 	# Un-comment this if you add C files to link with later:
     OBJECT            => '$(O_FILES)', # link all the C files too
     BUILD_REQUIRES      => {

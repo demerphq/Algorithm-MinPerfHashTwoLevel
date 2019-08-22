@@ -15,6 +15,8 @@ BEGIN {
         MPH_F_DETERMINISTIC         =>  (1<<1),
        #MPH_F_NO_DEDUPE             =>  (1<<2),
        #MPH_F_VALIDATE              =>  (1<<3),
+        MPH_F_DEBUG                 =>  (1<<30),
+        MPH_F_DEBUG_MORE            =>  (1<<31),
         MAX_VARIANT                 =>  7,
         MIN_VARIANT                 =>  5,
         STADTX_HASH_SEED_BYTES      => 16,

@@ -19,7 +19,6 @@ BEGIN {
        #MPH_F_VALIDATE          =>  (1<<3),
        MPH_F_COMPRESS_KEYS      =>  (1<<19),
        MPH_F_COMPRESS_VALS      =>  (1<<20),
-       MPH_F_DEBUG              =>  (1<<31),
     );
     @xs_sub_names= qw(
         find_first_prefix
@@ -173,7 +172,7 @@ sub make_file {
     $opts{comment}= "" unless defined $opts{comment};
     
     my $comment= $opts{comment}||"";
-    my $debug= $opts{debug} || 0;
+    my $debug= delete $opts{debug} || 0;
     if (!exists $opts{variant}) {
         if ($class=~/MultiLevel/) {
             $opts{variant}= 6;
@@ -212,7 +211,9 @@ sub make_file {
         if delete $opts{compress_vals};
 
     $compute_flags |= MPH_F_DEBUG
-        if delete $opts{debug};
+        if $debug > 1;
+    $compute_flags |= MPH_F_DEBUG_MORE
+        if $debug and $debug>2;
 
     die "Unknown variant '$variant', max known is "
         . MAX_VARIANT . " default is " . $DEFAULT_VARIANT
@@ -227,8 +228,6 @@ sub make_file {
     my $buf;
     {
         my $seed= $opts{seed};
-        m!perl author_tools/t.pl! and print for `ps auwx`;
-        warn "starting compile\n" if $debug;
         my $hasher= Algorithm::MinPerfHashTwoLevel->new(
             debug => $debug,
             seed => (ref $seed ? $$seed : $seed),
@@ -238,18 +237,12 @@ sub make_file {
             separator => $separator,
         );
         my $buckets= $hasher->compute($source_hash);
-        warn "finished compile\n" if $debug;
 
         my $buf_length= $hasher->{buf_length};
         my $state= $hasher->{state};
         my $keys_av= $hasher->{_keys_av};
-        warn "starting packed_xs\n" if $debug;
-        m!perl author_tools/t.pl! and print for `ps auwx`;
         my $bytes= packed_xs($buf, $variant, $buf_length, $state, $comment, $compute_flags, $separator, @$buckets, @$keys_av);
-        m!perl author_tools/t.pl! and print for `ps auwx`;
-        warn "finished packed_xs\n" if $debug;
         $$seed= $hasher->get_seed if ref $seed;
-        printf "packed file is %d bytes\n", $bytes if $debug;
     }
 
     my $tmp_file= "$ofile.$$";

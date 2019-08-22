@@ -84,7 +84,7 @@ for my $test_nr (1..1000) {
         $test_file,
         source_hash => $want_flat,
         comment     => $this_comment,
-        debug       => $ENV{TEST_VERBOSE},
+        debug       => ($ENV{TEST_VERBOSE}||0)>1,
         variant     => 6,
         canonical   => 1,
     );

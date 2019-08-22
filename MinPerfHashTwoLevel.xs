@@ -692,7 +692,7 @@ FETCH(self_hv, key_sv)
             found_it= triple_lookup_key_pvn(aTHX_ obj, ml, NULL, pv, full_key_len, RETVAL, key_sv);
         } else {
             struct mph_header *mph= obj->header;
-            U32 idx= triple_find_first_prefix(aTHX_
+            IV idx= triple_find_first_prefix(aTHX_
                 obj, p1_sv, p2_sv, key_sv,
                 ml->leftmost_idx, ml->rightmost_idx);
             if (idx>=0) {

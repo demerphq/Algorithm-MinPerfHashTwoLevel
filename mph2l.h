@@ -103,7 +103,8 @@
 #define MPH_F_COMPRESS_KEYS         (1<<19)
 #define MPH_F_COMPRESS_VALS         (1<<20)
 
-#define MPH_F_DEBUG                 (1<<31)
+#define MPH_F_DEBUG                 (1<<30)
+#define MPH_F_DEBUG_MORE            (1<<31)
 
 
 #if 1
