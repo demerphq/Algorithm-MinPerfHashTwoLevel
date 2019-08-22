@@ -1567,9 +1567,12 @@ _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* c
         val_is_utf8_generic= the_flag;
         val_flags_rlen= 0;
     }
+    if (str_rlen < 1024*1024) {
+        flags &= ~(MPH_F_COMPRESS_VALS|MPH_F_COMPRESS_KEYS);
+    }
     if (variant > 6) {
         /* absolute worst case, every string component is unique  3 per key + 1 val */
-        str_len_rlen= _roundup(sizeof(struct str_len) * 4 * bucket_count + 1, alignment);
+        str_len_rlen= _roundup(sizeof(struct str_len) * 4 * (bucket_count + 1), alignment);
         compressor_init(&compressor);
         str_len_init(&str_len_objs, &compressor);
     }
@@ -1586,6 +1589,7 @@ _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* c
         + sizeof(compressor)
         + 1024                  /* for good measure */
     ;
+
 
     sv_grow(buf_sv,total_size);
     SvPOK_on(buf_sv);
@@ -1829,8 +1833,10 @@ RETRY:
         codepair_frozen_size= codepair_array_freeze(&compressor.codepair_array,NULL,debug);
         sblen= str_buf_len(str_buf);
         frozen_pv= str_buf_aligned_alloc(str_buf,codepair_frozen_size,8);
-        if (!frozen_pv)
-            croak("not enough memory? need codepair_frozen_size: %u", codepair_frozen_size);
+        if (!frozen_pv) {
+            str_buf_dump(aTHX_ str_buf);
+            croak("not enough memory? need codepair_frozen_size: %u str_rlen: %u", codepair_frozen_size, str_rlen);
+        }
         head->codepair_ofs= frozen_pv - start;
         frozen= (struct codepair_array_frozen *)frozen_pv;
         codepair_array_freeze(&compressor.codepair_array,frozen,debug);

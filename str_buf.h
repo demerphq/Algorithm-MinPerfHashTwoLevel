@@ -9,6 +9,14 @@ struct str_buf {
 };
 
 PERL_STATIC_INLINE void
+str_buf_dump(pTHX_ struct str_buf *str_buf) {
+    warn("str_buf=%pstr_buf.start=%p\nstr_buf.ofs_start=%p\nstr_buf.pos=%p (%lu)\nstr_buf.end=%p\n",
+            str_buf, str_buf->start, str_buf->ofs_start,
+            str_buf->pos, str_buf->end - str_buf->pos,
+            str_buf->end);
+}
+
+PERL_STATIC_INLINE void
 str_buf_init(pTHX_ struct str_buf *str_buf, char *start, char *pos, char *end) {
     str_buf->start= start;
     str_buf->end= end;
@@ -26,7 +34,7 @@ str_buf_len(pTHX_ struct str_buf *str_buf) {
 
 PERL_STATIC_INLINE char *
 str_buf_aligned_alloc(pTHX_ struct str_buf *str_buf, U32 len, U32 align) {
-    U32 mod= (UV)str_buf->pos % align;
+    U32 mod= (str_buf->pos - str_buf->start) % align;
     U32 incr= mod ? align - mod : 0;
 
     if (str_buf->pos + len + incr < str_buf->end) {
