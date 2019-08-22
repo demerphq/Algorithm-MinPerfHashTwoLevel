@@ -97,5 +97,9 @@ for my $test_nr (1..1000) {
     is_deeply($got_flat,   $want_flat, "flattened test $test_nr");
     my $not_present= new_id();
     ok(!exists $tied_hash{$not_present},"not exists as expected");
+    my ($top_key)= grep { ref $tied_hash{$_} } keys(%tied_hash);
+    if (defined $top_key) {
+        ok(!exists $tied_hash{$top_key}{$not_present}, "second level not exists as expected");
+    }
 }
 done_testing();
