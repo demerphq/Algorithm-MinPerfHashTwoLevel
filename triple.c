@@ -25,7 +25,7 @@ triple_set_val(pTHX_ struct mph_obj *obj, struct mph_triple_bucket *bucket, U32 
 
     if (!bucket) {
         struct mph_header *mph= obj->header;
-        bucket= (struct mph_triple_bucket *)((char *)mph + mph->table_ofs);
+        bucket= TRIPLE_BUCKET_PTR(mph);
         bucket += bucket_idx;
     }
     str_len += bucket->v_idx;
@@ -41,7 +41,7 @@ triple_set_val(pTHX_ struct mph_obj *obj, struct mph_triple_bucket *bucket, U32 
                             bucket_idx, VAL_FLAGS_PTR(mph), 1,
                             utf8_flags & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
     } else {
-        U8 *strs= (U8 *)mph + mph->str_buf_ofs;
+        U8 *strs= STR_BUF_PTR(mph);
         sv_set_from_bucket(aTHX_ val_sv, strs, ofs, len,
                             bucket_idx, VAL_FLAGS_PTR(mph), 1,
                             utf8_flags & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
@@ -70,7 +70,7 @@ triple_set_key(pTHX_ struct mph_obj *obj, U32 str_len_idx, struct mph_triple_buc
     struct str_len *str_len= STR_LEN_PTR(mph);
     U32 ofs= str_len[str_len_idx].ofs;
     I32 len= str_len[str_len_idx].len;
-    U8 utf8_flags= mph->utf8_flags;
+    U8 utf8_flags= MPH_UTF8_FLAGS(mph);
     struct codepair_array *codepair_array= &obj->codepair_array;
 
     triple_set_key_fast(aTHX_ codepair_array, STR_BUF_PTR(mph), KEY_FLAGS_PTR(mph), ofs, len, bucket_idx, key_sv, utf8_flags);
@@ -96,12 +96,12 @@ _triple_find_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, 
     U8 *key_flags= KEY_FLAGS_PTR(mph);
 
     struct mph_triple_bucket *bucket;
-    U32 num_buckets = mph->num_buckets;
+    U32 num_buckets = NUM_BUCKETS(mph);
     I32 cmp;
     U8 *mph_u8= (U8*)mph;
-    U8 utf8_flags= mph->utf8_flags;
-    char *table_start= (char *)mph + mph->table_ofs;
-    U32 bucket_size= BUCKET_SIZE(mph->variant);
+    U8 utf8_flags= MPH_UTF8_FLAGS(mph);
+    char *table_start= TABLE_PTR(mph);
+    U32 bucket_size= MPH_BUCKET_SIZE(mph);
     IV last_m= -1;
     SV *cmp_utf8_sv= NULL;
     int p_is_utf8= SvUTF8(p1_sv) ? 1 : 0;
@@ -189,7 +189,7 @@ triple_find_first_last_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, S
     IV first= _triple_find_prefix(aTHX_ obj, p1_sv, p2_sv, p3_sv, l, r);
 
     if (first >= 0) {
-        struct mph_triple_bucket *bucket_start= (struct mph_triple_bucket *)((char *)mph + mph->table_ofs);
+        struct mph_triple_bucket *bucket_start= TRIPLE_BUCKET_PTR(mph);
         struct mph_triple_bucket *first_bucket= bucket_start + first;
         if (last) {
             if (p3_sv) {
@@ -242,11 +242,11 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
         SV *val_sv, SV *leaf_sv)
 {
     struct mph_header *mph= obj->header;
-    struct str_len *str_len= STR_LEN_PTR(mph);
     struct codepair_array *codepair_array= &obj->codepair_array;
-    U8 *strs= (U8 *)mph + mph->str_buf_ofs;
-    U32 bucket_size= BUCKET_SIZE(mph->variant);
-    struct mph_triple_bucket *first_bucket= (struct mph_triple_bucket *)((char *)mph + mph->table_ofs);
+    U32 bucket_size= MPH_BUCKET_SIZE(mph);
+    struct str_len *str_len= STR_LEN_PTR(mph);
+    U8 *strs= STR_BUF_PTR(mph);
+    struct mph_triple_bucket *first_bucket= TRIPLE_BUCKET_PTR(mph);
     struct mph_triple_bucket *bucket;
     U8 *state= STATE_PTR(mph);
     U64 h0;
@@ -269,7 +269,7 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
 
     h0= mph_hash_with_state(state,full_key_pv,full_key_len);
     h1= h0 >> 32;
-    index= h1 % mph->num_buckets;
+    index= h1 % NUM_BUCKETS(mph);
 
     bucket= first_bucket + index;
     if (!bucket->xor_val)
@@ -279,7 +279,7 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
     if ( bucket->index < 0 ) {
         index = -bucket->index-1;
     } else {
-        HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets);
+        HASH2INDEX(index,h2,bucket->xor_val,NUM_BUCKETS(mph));
     }
 
     bucket= first_bucket + index;
@@ -287,6 +287,7 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
     bucket= first_bucket + index;
 
     if (leaf_sv) {
+        assert(ml); /* ml required when leaf_sv is provided */
         if (
             ml->k1_idx == bucket->k1_idx &&
             ml->k2_idx == bucket->k2_idx &&
@@ -301,13 +302,19 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
         STRLEN len1, len2, len3;
         pv2= memchr(full_key_pv,ml->separator,full_key_len);
         if (!pv2) warn("key '%"SVf"' does not contain a separator", full_key_sv);
-        pv2++;
         len1= pv2 - full_key_pv;
+        pv2++;
         pv3= memchr(pv2, ml->separator, full_key_end - pv2);
         if (!pv3) warn("key '%"SVf"' only contains one separator", full_key_sv);
-        pv3++;
         len2= pv3 - pv2;
+        pv3++;
         len3= full_key_end - pv3;
+        if (0) warn("full_key: '%.*s' p1: '%.*s' p2: '%.*s' p3: '%.*s'",
+                (int)full_key_len, full_key_pv,
+                (int)len1, full_key_pv,
+                (int)len2, pv2,
+                (int)len3, pv3);
+
         if (
             str_len_pv_eq(codepair_array, str_len, strs, bucket->k1_idx, full_key_pv, len1) &&
             str_len_pv_eq(codepair_array, str_len, strs, bucket->k2_idx, pv2, len2) &&
@@ -320,7 +327,7 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
     if (foundit && val_sv)
         triple_set_val(aTHX_ obj, bucket, index, val_sv);
 
-    return 0;
+    return foundit;
 }
 
 

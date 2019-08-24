@@ -102,5 +102,12 @@ for my $test_nr (1..1000) {
     if (defined $top_key) {
         ok(!exists $tied_hash{$top_key}{$not_present}, "second level not exists as expected");
     }
+    my $tied= tied(%tied_hash);
+    foreach my $key (keys $want_flat) {
+        my $exists= $tied->exists_composite($key);
+        my $value= $tied->fetch_composite($key);
+        is($exists, 1, "exists_composite key '$key'");
+        is($value, $want_flat->{$key},"fetch_composite key '$key'");
+    }
 }
 done_testing();

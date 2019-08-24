@@ -627,9 +627,11 @@ DESTROY(self_hv)
 }
 
 SV *
-fetch1(self_hv, full_key_sv)
+fetch_composite(self_hv, full_key_sv)
         HV *self_hv
         SV *full_key_sv
+    ALIAS:
+        exists_composite = 1
     PREINIT:
         dMY_CXT;
         struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
@@ -639,14 +641,19 @@ fetch1(self_hv, full_key_sv)
     dMOUNT;
     IV found_it= 0;
     STRLEN full_key_len;
-    char *full_key_pv;
+    char *full_key_pv= SvPV(full_key_sv, full_key_len);
 
     GET_MOUNT_AND_OBJ(self_hv);
     GET_FAST_PROPS(self_hv);
 
-    RETVAL= newSV(0);
+    if (ml->level > 1) croak("not defined on child nodes");
+
+    RETVAL= ix ? NULL : newSV(0);
 
     found_it= triple_lookup_key_pvn(aTHX_ obj, ml, NULL, full_key_pv, full_key_len, RETVAL, NULL);
+
+    if (!RETVAL)
+        RETVAL= found_it ? &PL_sv_yes : &PL_sv_no;
 }
     OUTPUT:
         RETVAL

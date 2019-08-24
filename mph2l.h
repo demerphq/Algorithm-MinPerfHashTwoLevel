@@ -116,9 +116,13 @@
 #define KEY_FLAGS_PTR(mph)      ((U8 *)mph + mph->key_flags_ofs)
 #define VAL_FLAGS_PTR(mph)      ((U8 *)mph + mph->val_flags_ofs)
 #define STATE_PTR(mph)          ((U8 *)mph + mph->state_ofs)
+#define TABLE_PTR(mph)          ((U8 *)mph + mph->table_ofs)
 #define BUCKET_PTR(mph)         ((struct mph_bucket *)((U8 *)mph + mph->table_ofs))
 #define SORTED_BUCKET_PTR(mph)  ((struct mph_sorted_bucket *)((U8 *)mph + mph->table_ofs))
-#define TRIPLE_BUCKET_PTR(mph)  ((struct mph_sorted_bucket *)((U8 *)mph + mph->table_ofs))
+#define TRIPLE_BUCKET_PTR(mph)  ((struct mph_triple_bucket *)((U8 *)mph + mph->table_ofs))
+#define NUM_BUCKETS(mph)        ((mph)->num_buckets)
+#define MPH_UTF8_FLAGS(mph)     ((mph)->utf8_flags)
+#define MPH_BUCKET_SIZE(mph)    BUCKET_SIZE(mph->variant)
 
 
 #define MPH_STR_LEN_HV_IDX 0
