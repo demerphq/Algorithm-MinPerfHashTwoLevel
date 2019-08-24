@@ -530,27 +530,78 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     return 0;
 }
 
-MPH_STATIC_INLINE int
-str_len_sv_eq(struct codepair_array *codepair_array, struct str_len *str_len, U8 *strs, U32 str_len_idx, SV *sv) {
+MPH_STATIC_INLINE
+int
+cpid_eq_pvn(pTHX_ struct codepair_array *codepair_array, const U32 id, const U32 len, char *pvc, const U32 pv_len) {
+    return pv_len == len &&
+           !cpid_cmp_pv_recursive_stack(aTHX_ codepair_array, id, &pvc, pvc + pv_len, 0);
+}
+
+MPH_STATIC_INLINE
+int
+cpid_eq_sv(pTHX_ struct codepair_array *codepair_array, const U32 id, const U32 len, SV *want_sv) {
+    char *want_pv;
+    STRLEN want_len;
+    want_pv= SvPV_nomg(want_sv,want_len);
+
+    return cpid_eq_pvn(aTHX_ codepair_array, id, len, want_pv, want_len);
+}
+
+
+
+
+MPH_STATIC_INLINE
+int
+str_len_pv_eq(struct codepair_array *codepair_array, struct str_len *str_len, U8 *strs, U32 str_len_idx, char *want_pv, STRLEN want_len) {
     U32 got_ofs= str_len[str_len_idx].ofs;
     I32 got_len= str_len[str_len_idx].len;
-    STRLEN want_len;
-    U8 *want_pv= SvPV_nomg(sv,want_len);
     if (got_len < 0) {
         got_len= -got_len;
-        if (got_len == want_len && cpid_eq_sv(codepair_array, got_ofs, got_len, sv))
-            return 1;
-        else
-            return 0;
+        return cpid_eq_pvn(codepair_array, got_ofs, got_len, want_pv, want_len);
     } else {
         U8 *got_pv= strs + got_ofs;
-        if (got_len == want_len && memEQ(want_pv, got_pv, want_len))
-            return 1;
-        else
-            return 0;
+        return got_len == want_len && memEQ(want_pv, got_pv, want_len);
     }
 }
 
+MPH_STATIC_INLINE
+int
+str_len_sv_eq(struct codepair_array *codepair_array, struct str_len *str_len, U8 *strs, U32 str_len_idx, SV *sv) {
+    STRLEN want_len;
+    U8 *want_pv= SvPV_nomg(sv,want_len);
+    return str_len_pv_eq(codepair_array, str_len, strs, str_len_idx, want_pv, want_len);
+}
+
+
+char *
+triple_build_mortal_key(pTHX_ SV *p1_sv, SV *p2_sv, SV *key_sv, STRLEN *full_key_lenp, const char separator) {
+    STRLEN full_key_len= SvCUR(p1_sv) + SvCUR(p2_sv) + SvCUR(key_sv) + 2;
+    char *pv;
+    char *cpv;
+
+    char *ppv; /* part pv */
+    STRLEN pkl; /* part key len */
+
+    Newx(pv,full_key_len,char);
+    SAVEFREEPV(pv);
+    cpv= pv;
+
+    ppv= SvPV_nomg(p1_sv,pkl);
+    Copy(ppv,cpv,pkl,char);
+    cpv += pkl;
+
+    *cpv++ = separator;
+
+    ppv= SvPV_nomg(p2_sv,pkl);
+    Copy(ppv,cpv,pkl,char);
+    cpv += pkl;
+
+    *cpv++ = separator;
+
+    ppv= SvPV_nomg(key_sv,pkl);
+    Copy(ppv,cpv,pkl,char);
+    *full_key_lenp= full_key_len;
+}
 
 int
 triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *full_key_sv, U8 *full_key_pv, STRLEN full_key_len,

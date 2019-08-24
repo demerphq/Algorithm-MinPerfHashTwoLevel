@@ -651,32 +651,8 @@ FETCH(self_hv, key_sv)
         p1_sv= ml->p1_sv;
         p2_sv= ml->p2_sv;
         if (MPH_HASH_FOR_FETCH) {
-            STRLEN full_key_len= SvCUR(p1_sv) + SvCUR(p2_sv) + SvCUR(key_sv) + 2;
-            char *pv;
-            char *cpv;
-
-            char *ppv; /* part pv */
-            STRLEN pkl; /* part key len */
-
-            Newx(pv,full_key_len,char);
-            SAVEFREEPV(pv);
-            cpv= pv;
-
-            ppv= SvPV_nomg(p1_sv,pkl);
-            Copy(ppv,cpv,pkl,char);
-            cpv += pkl;
-
-            *cpv++ = ml->separator;
-
-            ppv= SvPV_nomg(p2_sv,pkl);
-            Copy(ppv,cpv,pkl,char);
-            cpv += pkl;
-
-            *cpv++ = ml->separator;
-
-            ppv= SvPV_nomg(key_sv,pkl);
-            Copy(ppv,cpv,pkl,char);
-
+            STRLEN full_key_len;
+            char *pv= triple_build_mortal_key(aTHX_ p1_sv, p2_sv, key_sv, &full_key_len, ml->separator);
             found_it= triple_lookup_key_pvn(aTHX_ obj, ml, NULL, pv, full_key_len, RETVAL, key_sv);
         } else {
             struct mph_header *mph= obj->header;

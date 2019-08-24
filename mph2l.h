@@ -414,12 +414,14 @@ IV triple_find_first_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV 
 IV triple_find_last_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, IV l, IV r);
 IV triple_find_first_last_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, IV l, IV r, IV *last);
 
-int triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *full_key_sv, U8 *full_key_pv, STRLEN full_key_len, SV *val_sv, SV *leaf_sv);
 void triple_set_val(struct mph_obj *obj, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *val_sv);
 void triple_set_key(struct mph_obj *obj, U32 str_len_idx, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *key_sv);
 
 void sv_set_from_str_len_idx( pTHX_ SV *got_sv, struct mph_header *mph, const U32 bucket_idx, const U32 str_len_idx );
 void trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf *str_buf);
+
+int triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *full_key_sv, U8 *full_key_pv, STRLEN full_key_len, SV *val_sv, SV *leaf_sv);
+char *triple_build_mortal_key(pTHX_ SV *p1_sv, SV *p2_sv, SV *key_sv, STRLEN *full_key_lenp, const char separator);
 
 MPH_STATIC_INLINE struct mph_triple_bucket *
 last_bucket_by_k1(struct mph_triple_bucket *bucket) {
