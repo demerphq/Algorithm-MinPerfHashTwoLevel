@@ -47,6 +47,8 @@ sub new {
     }
     $self->{leftmost_idx}= 0;
     $self->{rightmost_idx}= $self->get_hdr_num_buckets - 1;
+    $self->{levels}= 3;
+    $self->{level}= 1;
     return $self;
 }
 

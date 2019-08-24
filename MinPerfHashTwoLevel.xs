@@ -25,8 +25,8 @@ I32 setup_fast_props(pTHX_ HV *self_hv, AV *mount_av, struct mph_header *mph, st
         ml.p2_sv= NULL;
         ml.p2_utf8_sv= NULL;
         ml.p2_latin1_sv= NULL;
-        ml.level = 0;
-        ml.levels = 0;
+        ml.level = 1;
+        ml.levels = 3;
         ml.fetch_key_first = 0;
     } else {
         hv_fetch_sv_with_keysv(sv, self_hv, MPH_KEYSV_PREFIX,1);
@@ -640,28 +640,16 @@ FETCH(self_hv, key_sv)
     dFAST_PROPS;
     dMOUNT;
     IV found_it= 0;
-    SV *p1_sv;
-    SV *p2_sv;
+    SV *p1_sv= NULL;
+    SV *p2_sv= NULL;
     RETVAL= ix ? NULL : newSV(0);
 
     GET_MOUNT_AND_OBJ(self_hv);
     GET_FAST_PROPS(self_hv);
 
-    if (!ml->p1_sv) {
-        p1_sv= key_sv;
-        p2_sv= NULL;
-        key_sv= NULL;
-    } else {
+    if (ml->level == 3) {
         p1_sv= ml->p1_sv;
-        if (ml->p2_sv) {
-            p2_sv= ml->p2_sv;
-        } else {
-            p2_sv= key_sv;
-            key_sv= NULL;
-        }
-    }
-
-    if (key_sv) {
+        p2_sv= ml->p2_sv;
         if (MPH_HASH_FOR_FETCH) {
             STRLEN full_key_len= SvCUR(p1_sv) + SvCUR(p2_sv) + SvCUR(key_sv) + 2;
             char *pv;
@@ -704,6 +692,12 @@ FETCH(self_hv, key_sv)
     } else {
         IV key_rightmost_idx;
         IV key_leftmost_idx;
+        if ( ml->p1_sv ) {
+            p1_sv= ml->p1_sv;
+            p2_sv= key_sv;
+        }
+        else
+            p1_sv= key_sv;
 
         key_leftmost_idx= triple_find_first_last_prefix(aTHX_
             obj, p1_sv, p2_sv, NULL,
