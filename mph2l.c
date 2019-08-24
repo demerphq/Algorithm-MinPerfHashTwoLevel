@@ -58,14 +58,13 @@ MPH_STATIC_INLINE
 IV
 _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, SV *got_sv, IV *hard_r)
 {
-    U32 num_buckets = mph->num_buckets;
+    U32 num_buckets = NUM_BUCKETS(mph);
     struct mph_bucket *bucket;
     I32 cmp;
     U8 *strs;
-    U8 *mph_u8= (U8*)mph;
-    U8 utf8_flags= mph->utf8_flags;
-    char *table_start= (char *)mph + mph->table_ofs;
-    U32 bucket_size= BUCKET_SIZE(mph->variant);
+    U8 utf8_flags= MPH_UTF8_FLAGS(mph);
+    char *table_start= TABLE_PTR(mph);
+    U32 bucket_size= MPH_BUCKET_SIZE(mph);
     IV m= (cmp_val && l+1<r) ? (l+1) : (l+r)/2;
     IV last_m= -1;
     SV *cmp_sv= NULL;
@@ -75,7 +74,7 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
 
     if (!got_sv) got_sv= sv_2mortal(newSV(0));
 
-    strs= (U8 *)mph + mph->str_buf_ofs;
+    strs= STR_BUF_PTR(mph);
     /* when "cmp_val" is 0 this is the "find the leftmost case of T in a sorted list" variant
      * of binary search, (alternatively put "find the number of items which are less
      * than T in a sorted list"), when "cmp_val" is 1 this is the "find the rightmost case of T in
@@ -96,7 +95,7 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
 
         if (m>=num_buckets) croak("m is larger than last bucket! for key '%"SVf"' l=%ld m=%ld r=%ld\n",pfx_sv,l,m,r);
         last_m= m;
-        sv_set_from_bucket_extra(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,mph_u8 + mph->key_flags_ofs,2,
+        sv_set_from_bucket_extra(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,m,KEY_FLAGS_PTR(mph),2,
                                  utf8_flags & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,FAST_SV_CONSTRUCT);
 #define CMP3(cmp,got_sv,pfx_sv) STMT_START {                        \
         int g_is_utf8= SvUTF8(got_sv) ? 1 : 0;                      \
@@ -142,7 +141,7 @@ _find_prefix(pTHX_ struct mph_header *mph, SV *pfx_sv, IV l, IV r, I32 cmp_val, 
      * and rightmost position are the same.) */
     if (l != last_m) {
         bucket= (struct mph_bucket *)(table_start + (l * bucket_size));
-        sv_set_from_bucket_extra(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,l,mph_u8 + mph->key_flags_ofs,2,
+        sv_set_from_bucket_extra(aTHX_ got_sv,strs,bucket->key_ofs,bucket->key_len,l,KEY_FLAGS_PTR(mph),2,
                                  utf8_flags & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT,FAST_SV_CONSTRUCT);
 
         CMP3(cmp,got_sv,pfx_sv);
@@ -184,21 +183,20 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
 {
     struct mph_bucket *bucket;
     U8 *strs;
-    U8 *mph_u8= (U8*)mph;
-    U8 utf8_flags= mph->utf8_flags;
-    if (index >= mph->num_buckets) {
+    U8 utf8_flags= MPH_UTF8_FLAGS(mph);
+    if (index >= NUM_BUCKETS(mph)) {
         return 0;
     }
     bucket= (struct mph_bucket *)
-            ((char *)mph + mph->table_ofs + (index * BUCKET_SIZE(mph->variant)));
+            (TABLE_PTR(mph) + (index * MPH_BUCKET_SIZE(mph)));
 
-    strs= (U8 *)mph + mph->str_buf_ofs;
+    strs= STR_BUF_PTR(mph);
     if (val_sv) {
-        sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,mph_u8 + mph->val_flags_ofs,1,
+        sv_set_from_bucket(aTHX_ val_sv,strs,bucket->val_ofs,bucket->val_len,index,VAL_FLAGS_PTR(mph),1,
                                  utf8_flags & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
     }
     if (key_sv) {
-        sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,mph_u8 + mph->key_flags_ofs,2,
+        sv_set_from_bucket(aTHX_ key_sv,strs,bucket->key_ofs,bucket->key_len,index,KEY_FLAGS_PTR(mph),2,
                                  utf8_flags & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT);
     }
     return 1;
@@ -207,9 +205,9 @@ lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv)
 int
 lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
 {
-    U8 *strs= (U8 *)mph + mph->str_buf_ofs;
-    char *table= ((char *)mph + mph->table_ofs);
-    U32 bucket_size= BUCKET_SIZE(mph->variant);
+    U8 *strs= STR_BUF_PTR(mph);
+    char *table= TABLE_PTR(mph);
+    U32 bucket_size= MPH_BUCKET_SIZE(mph);
     struct mph_sorted_bucket *bucket;
     U8 *state= STATE_PTR(mph);
     STRLEN key_len;
@@ -229,7 +227,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     key_pv= SvPV_nomg(key_sv,key_len);
     h0= mph_hash_with_state(state,key_pv,key_len);
     h1= h0 >> 32;
-    index= h1 % mph->num_buckets;
+    index= h1 % NUM_BUCKETS(mph);
 
     bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
     if (!bucket->xor_val)
@@ -239,11 +237,11 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     if ( bucket->index < 0 ) {
         index = -bucket->index-1;
     } else {
-        HASH2INDEX(index,h2,bucket->xor_val,mph->num_buckets);
+        HASH2INDEX(index,h2,bucket->xor_val,NUM_BUCKETS(mph));
     }
     bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
 
-    if (mph->variant == 6) {
+    if (MPH_IS_SORTED(mph)) {
         index= bucket->sort_index;
         bucket= (struct mph_sorted_bucket *)(table + (index * bucket_size));
     }
@@ -251,9 +249,9 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     got_key_pv= strs + bucket->key_ofs;
     if (bucket->key_len == key_len && memEQ(key_pv,got_key_pv,key_len)) {
         if (val_sv) {
-            U8 utf8_flags= mph->utf8_flags;
+            U8 utf8_flags= MPH_UTF8_FLAGS(mph);
             sv_set_from_bucket(aTHX_ val_sv, strs, bucket->val_ofs, bucket->val_len, index,
-                                 ((U8*)mph)+mph->val_flags_ofs, 1,
+                                 VAL_FLAGS_PTR(mph), 1,
                                  utf8_flags & MPH_VALS_ARE_SAME_UTF8NESS_MASK, MPH_VALS_ARE_SAME_UTF8NESS_SHIFT);
         }
         return 1;

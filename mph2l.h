@@ -122,7 +122,9 @@
 #define TRIPLE_BUCKET_PTR(mph)  ((struct mph_triple_bucket *)((U8 *)mph + mph->table_ofs))
 #define NUM_BUCKETS(mph)        ((mph)->num_buckets)
 #define MPH_UTF8_FLAGS(mph)     ((mph)->utf8_flags)
-#define MPH_BUCKET_SIZE(mph)    BUCKET_SIZE(mph->variant)
+#define MPH_VARIANT(mph)        ((mph)->variant)
+#define MPH_BUCKET_SIZE(mph)    BUCKET_SIZE(MPH_VARIANT(mph))
+#define MPH_IS_SORTED(mph)      (MPH_VARIANT(mph)>5)
 
 
 #define MPH_STR_LEN_HV_IDX 0
