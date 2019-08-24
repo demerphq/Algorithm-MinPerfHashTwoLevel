@@ -18,7 +18,7 @@ I32 setup_fast_props(pTHX_ HV *self_hv, AV *mount_av, struct mph_header *mph, st
     SV **svp;
     struct mph_multilevel ml;
 
-    if (mph->variant == 7) {
+    if (MPH_IS_TRIPLE(mph)) {
         ml.p1_sv= NULL;
         ml.p1_utf8_sv= NULL;
         ml.p1_latin1_sv= NULL;
@@ -568,7 +568,7 @@ NEXTKEY(self_hv,...)
     GET_FAST_PROPS(self_hv);
     mph= obj->header;
 
-    first_bucket= (struct mph_triple_bucket *)((char *)mph + mph->table_ofs);
+    first_bucket= TRIPLE_BUCKET_PTR(mph);
 
     if (ix) /* FIRSTKEY */
         ml->iter_idx= ml->leftmost_idx;
