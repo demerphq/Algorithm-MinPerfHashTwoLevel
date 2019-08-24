@@ -1117,14 +1117,3 @@ cpid_cmp_pv_recursive_stack(pTHX_ struct codepair_array *codepair_array, U32 cod
     return ret;
 }
 
-int
-cpid_eq_sv(pTHX_ struct codepair_array *codepair_array, U32 id, U32 len, SV *sv) {
-    char *pvc;
-    STRLEN sv_len;
-    pvc= SvPV_nomg(sv,sv_len);
-    if (sv_len!=len) return 0;
-
-    return !cpid_cmp_pv_recursive_stack(aTHX_ codepair_array, id, &pvc, pvc + sv_len, 0);
-}
-
-

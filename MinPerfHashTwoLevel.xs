@@ -627,6 +627,31 @@ DESTROY(self_hv)
 }
 
 SV *
+fetch1(self_hv, full_key_sv)
+        HV *self_hv
+        SV *full_key_sv
+    PREINIT:
+        dMY_CXT;
+        struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
+    CODE:
+{
+    dFAST_PROPS;
+    dMOUNT;
+    IV found_it= 0;
+    STRLEN full_key_len;
+    char *full_key_pv;
+
+    GET_MOUNT_AND_OBJ(self_hv);
+    GET_FAST_PROPS(self_hv);
+
+    RETVAL= newSV(0);
+
+    found_it= triple_lookup_key_pvn(aTHX_ obj, ml, NULL, full_key_pv, full_key_len, RETVAL, NULL);
+}
+    OUTPUT:
+        RETVAL
+
+SV *
 FETCH(self_hv, key_sv)
         HV *self_hv
         SV *key_sv

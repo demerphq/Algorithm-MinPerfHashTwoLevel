@@ -621,6 +621,7 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
     U32 index;
     U8 *got_key_pv;
     STRLEN got_key_len;
+    int foundit= 0;
 
     if (full_key_sv) {
         if (SvUTF8(full_key_sv)) {
@@ -651,16 +652,39 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
     index= bucket->sort_index;
     bucket= first_bucket + index;
 
-    if (
-        ml->k1_idx == bucket->k1_idx &&
-        ml->k2_idx == bucket->k2_idx &&
-        str_len_sv_eq(codepair_array, str_len, strs, bucket->k3_idx, leaf_sv)
-    ) {
-        if (val_sv)
-            triple_set_val(aTHX_ obj, bucket, index, val_sv);
-
-        return 1;
+    if (leaf_sv) {
+        if (
+            ml->k1_idx == bucket->k1_idx &&
+            ml->k2_idx == bucket->k2_idx &&
+            str_len_sv_eq(codepair_array, str_len, strs, bucket->k3_idx, leaf_sv)
+        ) {
+            foundit =1;
+        }
+    } else {
+        U8 *pv2;
+        U8 *pv3;
+        U8 *full_key_end= full_key_pv + full_key_len;
+        STRLEN len1, len2, len3;
+        pv2= memchr(full_key_pv,ml->separator,full_key_len);
+        if (!pv2) warn("key '%"SVf"' does not contain a separator", full_key_sv);
+        pv2++;
+        len1= pv2 - full_key_pv;
+        pv3= memchr(pv2, ml->separator, full_key_end - pv2);
+        if (!pv3) warn("key '%"SVf"' only contains one separator", full_key_sv);
+        pv3++;
+        len2= pv3 - pv2;
+        len3= full_key_end - pv3;
+        if (
+            str_len_pv_eq(codepair_array, str_len, strs, bucket->k1_idx, full_key_pv, len1) &&
+            str_len_pv_eq(codepair_array, str_len, strs, bucket->k2_idx, pv2, len2) &&
+            str_len_pv_eq(codepair_array, str_len, strs, bucket->k3_idx, pv3, len3)
+        ) {
+            foundit= 1;
+        }
     }
+
+    if (foundit && val_sv)
+        triple_set_val(aTHX_ obj, bucket, index, val_sv);
 
     return 0;
 }

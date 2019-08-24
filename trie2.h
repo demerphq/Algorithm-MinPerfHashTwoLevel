@@ -175,7 +175,7 @@ U32 compress_string(struct compressor *compressor, U8 *str, STRLEN len);
 
 char * decode_cpid_recursive(pTHX_ struct codepair_array *codepair_array, U32 id, char **buf, char *buf_end, int depth);
 char * decode_cpid_len_into_sv(pTHX_ struct codepair_array *codepair_array, U32 id, U32 len, SV *sv);
-int cpid_eq_sv(pTHX_ struct codepair_array *codepair_array, U32 id, U32 len, SV *sv);
+int cpid_cmp_pv_recursive_stack(pTHX_ struct codepair_array *codepair_array, U32 code, char **buf, char *buf_end, int depth);
 
 #endif
 
