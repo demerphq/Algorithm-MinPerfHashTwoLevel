@@ -1,8 +1,9 @@
-#ifndef _MPH_HASH_H
-#define _MPH_HASH_H
+#ifndef _MPH_SIPHASH_H
+#define _MPH_SIPHASH_H
+#include "mph_hv_macro.h"
 
-#ifndef SIPROUND
-#define SIPROUND            \
+#ifndef MPH_SIPROUND
+#define MPH_SIPROUND            \
   STMT_START {              \
     v0 += v1; v1=ROTL64(v1,13); v1 ^= v0; v0=ROTL64(v0,32); \
     v2 += v3; v3=ROTL64(v3,16); v3 ^= v2;     \
@@ -11,8 +12,8 @@
   } STMT_END
 #endif
 
-#ifndef SIPHASH_SEED_STATE
-#define SIPHASH_SEED_STATE(key,v0,v1,v2,v3) \
+#ifndef MPH_SIPHASH_SEED_STATE
+#define MPH_SIPHASH_SEED_STATE(key,v0,v1,v2,v3) \
 do {                                    \
     v0 = v2 = U8TO64_LE(key + 0);       \
     v1 = v3 = U8TO64_LE(key + 8);       \
@@ -79,7 +80,7 @@ MPH_STATIC_INLINE U64                       \
 FNC (const unsigned char * const seed, const unsigned char *in, const STRLEN inlen) \
 {                                                                   \
     U64 state[4];                                                   \
-    SIPHASH_SEED_STATE(seed,state[0],state[1],state[2],state[3]);   \
+    MPH_SIPHASH_SEED_STATE(seed,state[0],state[1],state[2],state[3]);   \
     return FNC ## _with_state((U8*)state,in,inlen);                 \
 }
 
@@ -87,14 +88,14 @@ FNC (const unsigned char * const seed, const unsigned char *in, const STRLEN inl
 MPH_STATIC_INLINE
 void mph_seed_state(const unsigned char * const seed_buf, unsigned char * state_buf) {
     U64 *v= (U64*) state_buf;
-    SIPHASH_SEED_STATE(seed_buf, v[0],v[1],v[2],v[3]);
+    MPH_SIPHASH_SEED_STATE(seed_buf, v[0],v[1],v[2],v[3]);
 }
 
 
 MPH_SIPHASH_FNC(
     mph_hash
-    ,SIPROUND;
-    ,SIPROUND;SIPROUND;SIPROUND;
+    ,MPH_SIPROUND;
+    ,MPH_SIPROUND;MPH_SIPROUND;MPH_SIPROUND;
 )
 
 #endif

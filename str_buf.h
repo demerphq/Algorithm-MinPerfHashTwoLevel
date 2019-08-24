@@ -1,5 +1,6 @@
-#ifndef _STR_BUF
-#define _STR_BUF
+#ifndef _MPH_STR_BUF
+#define _MPH_STR_BUF
+#include "mph_siphash.h"
 struct str_buf {
     char *start;
     char *ofs_start;
