@@ -627,11 +627,11 @@ DESTROY(self_hv)
 }
 
 SV *
-fetch_composite(self_hv, full_key_sv)
+fetch_composite_key(self_hv, full_key_sv)
         HV *self_hv
         SV *full_key_sv
     ALIAS:
-        exists_composite = 1
+        exists_composite_key = 1
     PREINIT:
         dMY_CXT;
         struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
