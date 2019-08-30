@@ -228,7 +228,105 @@ die if the file is not found or any of these checks fail.
 
 =head2 FILE FORMAT
 
-Currently the file format for variant 7/ThreeLevelOnDisk images is undocumented.
+Variant 7 uses the following structure:
+
+Structure:
+
+    Header
+    Hash-state
+    Bucket-table
+    Key flags (optional)
+    Val flags (optional)
+    String/Length Data
+    Strings (optional)
+    Compressed Data (optional)
+    Checksum
+
+Header:
+
+    U32 magic_num       -> 1278363728 -> "PH2L"
+    U32 variant         -> 7
+    U32 num_buckets     -> number of buckets/keys in hash
+    U32 state_ofs       -> offset in file where hash preseeded state is found
+    U32 table_ofs       -> offset in file where bucket table starts
+    U32 key_flags_ofs   -> offset in file where key flags are located
+    U32 val_flags ofs   -> offset in file where val flags are located
+    U32 str_buf_ofs     -> offset in file where strings are located
+    U8  utf8_flags      -> flag bits for all keys if any
+    U8  separator       -> which codepoint is the separator for our keys
+    U16 reserved_u16    -> reserved/padding (0)
+    U32 str_len_ofs     -> offset in file where str_len data is located.
+    U32 codepair_ofs    -> offset in file where codepair data is located.
+    U32 reserved_u32    -> reserved field/padding (0)
+
+
+All "_ofs" values in the header are a multiple of 8, and the relevant sections
+maybe be null padded to ensure this is so.
+
+The last 8 bytes of the file contains a hash checksum of the rest of the entire
+file. This value is itself 8 byte aligned.
+
+Keys and values can be independently encoded as either raw strings, or as compressed
+data. Raw strings are automatically packed to avoid duplication where possible. String
+values are represented by a U32 which represents an offset into the "str_len" table.
+This table consists of a set of pairs of I32,U32 "offset and length", where negative
+values represent the dictionary ids of compressed strings, and positive values
+represent offsets into the string buffer. Compressed data is stored in a set of buckets
+which are either 48 or 64 bits wide.
+
+Buckets:
+
+   I32 xor_val      -> the xor_val for this bucket's h1 lookups (0 means none)
+                       for variant 1 and later this may also be treated as a signed
+                       integer, with negative values representing the index of
+                       the bucket which contains the correct key (-index-1).
+   U32 k1           -> str_len index for the first element of the compound key.
+   U32 k2           -> str_len index for the second element of the compound key.
+   U32 k3           -> str_len index for the third element of the compound key.
+   U32 sort_index   -> sort index for this bucket, used in hash lookup in combination with xor_val
+   U32 v_idx        -> str_len index for the value of this key.
+   I32 n1           -> offset to the first or last item with the same k1 as this record.
+   I32 n2           -> offset to the first or last item with the same k2 as this record.
+
+Str Len:
+
+    I32 offset      -> When >=0 offset into str_buf, when negative represents a compressed item
+    U32 length      -> Length of either the string or the compressed item.
+
+Compressed Data: # this may be revised before release!
+    U32 compressed_magic    - 19720428
+    U32 next_codepair_id    - max codepair id. these names are terrible
+    U32 short_info_next     - max short codepair id.
+    U32 long_info_next      - max long codepair id.
+    U32 short_bytes         - number of short codepair ids
+    U32 long_bytes          - number of long codepair ids
+
+Short Codepairs:
+    U24 codea       -> code value a
+    U24 codeb       -> code value b
+
+Long Codepairs:
+    U32 codea
+    U32 codeb
+
+Compression, data can be optionally compressed using a custom version of LZ compression.
+All data is represented as one or mode "codes", which are essentially indexes into a dictionary.
+The first 257 codes are "virtual", with the ones from 0..255 representing their respective byte,
+and code 256 representing the empty string. With this in mind, the data stream is broken down
+into pairs of codes, with each new pair being given the next available code which can be reused
+when compressing something later. The pair that represents the most data is chosen each time.
+The empty string is used to resolve cases where the data cannot efficiently be divided into an
+even number of subsequences. This code are complemented by two bits which are used to represent
+a "continue bit", and a "stop bit". The "stop bit" is used to represent the end of a string,
+and the "continue bit" is used to be able to insert previous emited sequences of pairs, instead
+of just a pair.
+
+The end result is that every unique string contained in the compressed blob can be represented
+by a single code and bits. Decoding is recursive, but eventually always hits a code that is in
+the 0..256 range where it stops. For codes that can be represented with 22 bits a 48 bit
+representation is used for the pairs, and for codes that require up to 30 bits a 64 bit
+representation is used for the pair. Compression for large numbers of small strings is in
+the 3:1 to 4:1 range, but for long strings it tends to be in the 8:1 or 9:1.
 
 =head2 EXPORT
 
