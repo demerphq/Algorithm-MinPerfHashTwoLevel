@@ -285,7 +285,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
             sv_setpvf(error,"file '%s' is too small to be a valid PH2L file", file);
         return MPH_MOUNT_ERROR_TOO_SMALL;
     }
-    ptr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED | MPH_MAP_POPULATE, fd, 0);
+    ptr = mmap(NULL, st.st_size, PROT_READ, MPH_MAP_FLAGS, fd, 0);
     close(fd); /* kernel holds its own refcount on the file, we do not need to keep it open */
     if (ptr == MAP_FAILED) {
         if (error)
