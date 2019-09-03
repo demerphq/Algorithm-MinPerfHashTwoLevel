@@ -135,7 +135,7 @@ for my $test_nr (1..1000) {
     }
     if (0) {
         my $tied= tied(%tied_hash);
-        foreach my $key (keys $want_flat) {
+        foreach my $key (keys %$want_flat) {
             my $exists= $tied->exists_composite($key);
             my $value= $tied->fetch_composite($key);
             is($exists, 1, "exists_composite key '$key'");
