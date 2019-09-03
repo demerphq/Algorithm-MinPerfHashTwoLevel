@@ -231,7 +231,7 @@ The INTHASH() function used is:
 
 which is just a simple 32 bit integer hash function I found at
 https://stackoverflow.com/a/12996028, but any decent reversible
-integer hash function would do. 
+integer hash function would do.
 
 *NOTE* in Perl a given string may have differing binary representations
 if it is encoded as utf8 or not. This module uses the same conventions
@@ -253,7 +253,7 @@ Construct a new Algorithm::MinPerfHashTwoLevel object. Optional arguments
 which may be provided are 'source_hash' which is a hash reference to use
 as the source for the minimal perfect hash, 'seed' which is expected to be
 a 16 byte string, and 'debug' which is expected to be 0 or 1, as well
-as variant, which may be 5 (use version v0.14 for variants before 5). 
+as variant, which may be 5 (use version v0.14 for variants before 5).
 The default is 5.
 
 =item compute

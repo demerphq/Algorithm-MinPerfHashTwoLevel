@@ -136,13 +136,13 @@ sub CLEAR {
 sub make_file {
     my ($class, %opts)= @_;
 
-    my $ofile= $opts{file} 
+    my $ofile= $opts{file}
         or die "file is a mandatory option to make_file";
     my $source_hash= $opts{source_hash}
         or die "source_hash is a mandatory option to make_file";
     $opts{comment}= "" unless defined $opts{comment};
     $opts{variant}= $DEFAULT_VARIANT unless defined $opts{variant};
-    
+
     my $comment= $opts{comment}||"";
     my $debug= $opts{debug} || 0;
     my $variant= int($opts{variant});
@@ -344,7 +344,7 @@ MPH_F_FILTER_UNDEF bit in compute_flags.
 =item max_tries
 
 The maximum number of attempts to make to find a solution for this keyset.
-Defaults to 3. 
+Defaults to 3.
 
 =item debug
 
@@ -450,11 +450,11 @@ The file structure consists of a header, followed by a byte vector of seed/state
 data for the hash function, followed by a bucket table with records of a fixed size,
 optionally followed by a bitvector of the flags for the keys with two bits per key,
 optionally followed by a bitvector of flags for values with one bit per value,
-followed by a string table containing the comment for the file and the strings it 
+followed by a string table containing the comment for the file and the strings it
 contains, and lastly a checksum; the last 8 bytes of the file contain a hash of the
-rest of the file. The key flags may be 0 for "latin-1/not-utf8", 1 for "is-utf8", 
-and 2 for "was-utf8" which is used for keys which can be represented as latin-1, 
-but should be restored as unicode/utf8. The val flags are similar but do not (need to) 
+rest of the file. The key flags may be 0 for "latin-1/not-utf8", 1 for "is-utf8",
+and 2 for "was-utf8" which is used for keys which can be represented as latin-1,
+but should be restored as unicode/utf8. The val flags are similar but do not (need to)
 support "was-utf8".
 
 Structure:
@@ -486,8 +486,8 @@ maybe be null padded to ensure this is so.
 The string buffer contains the comment at str_buf_ofs+1, its length can be found
 with strlen(), the comment may NOT contain nulls, and will be null terminated. All
 other strings in the table are NOT null padded, the length data stored in the
-bucket records should be used to determine the length of the keys and values. 
-The last 8 bytes of the file contains a hash checksum of the rest of the entire 
+bucket records should be used to determine the length of the keys and values.
+The last 8 bytes of the file contains a hash checksum of the rest of the entire
 file. This value is itself 8 byte aligned.
 
 Buckets:

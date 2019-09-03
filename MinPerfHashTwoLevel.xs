@@ -102,7 +102,7 @@ lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv)
     bucket= buckets + index;
     if (!bucket->xor_val)
         return 0;
-    
+
     h2= h0 & 0xFFFFFFFF;
     if ( bucket->index < 0 ) {
         index = -bucket->index-1;
@@ -836,8 +836,8 @@ compute_xs(self_hv)
      * with the most collisions - we use this later to size some of our data structures.
      */
     by_length_av= idx_by_length(aTHX_ keybuckets_av);
-        
-    RETVAL= solve_collisions_by_length(aTHX_ bucket_count, max_xor_val, by_length_av, h2_packed_av, keybuckets_av, 
+
+    RETVAL= solve_collisions_by_length(aTHX_ bucket_count, max_xor_val, by_length_av, h2_packed_av, keybuckets_av,
         variant, buckets_av);
 }
     OUTPUT:
@@ -865,7 +865,7 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
     U32 header_rlen= _roundup(sizeof(struct mph_header),16);
     STRLEN state_len;
     char *state_pv= SvPV(state_sv, state_len);
-    
+
     U32 alignment= sizeof(U64);
     U32 state_rlen= _roundup(state_len,alignment);
     U32 table_rlen= _roundup(sizeof(struct mph_bucket) * bucket_count,alignment);
@@ -931,7 +931,7 @@ packed_xs(variant,buf_length_sv,state_sv,comment_sv,flags,buckets_av)
         + val_flags_rlen
         + str_rlen
     ;
-    
+
     sv_buf= newSV(total_size);
     SvPOK_on(sv_buf);
     SvCUR_set(sv_buf,total_size);
