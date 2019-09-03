@@ -103,7 +103,7 @@ for my $test_nr (1..1000) {
         ok(!exists $tied_hash{$top_key}{$not_present}, "second level not exists as expected");
     }
     my $tied= tied(%tied_hash);
-    foreach my $key (keys $want_flat) {
+    foreach my $key (keys %$want_flat) {
         my $exists= $tied->exists_composite_key($key);
         my $value= $tied->fetch_composite_key($key);
         is($exists, 1, "exists_composite key '$key'");
