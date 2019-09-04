@@ -1,5 +1,5 @@
 # 'file' version specification - format is described in magic(5).
-0   string  PH2L  Minimum Perfect Hash 2 Level data
->4  lelong  5   variant %u unsorted
->4  lelong  6   variant %u sorted 
->4  lelong  7   variant %u three-level
+0	string	PH2L	Minimum Perfect Hash 2 Level data
+>4	lelong	5	variant %u unsorted
+>4	lelong	6	variant %u sorted
+>4	lelong	7	variant %u three-level
