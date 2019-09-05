@@ -302,12 +302,21 @@ Compressed Data: # this may be revised before release!
     U32 long_bytes          - number of long codepair ids
 
 Short Codepairs:
-    U24 codea       -> code value a
-    U24 codeb       -> code value b
+    U24 codea       -> code value a (little endian!)
+    U24 codeb       -> code value b (little endian!)
 
 Long Codepairs:
-    U32 codea
-    U32 codeb
+    U32 codea -> little endian
+    U32 codeb -> little endian
+
+"Code" structure:
+    *low* 2 bits are flags
+    0 bit - Stop bit. When set it means this codepair ends a multi-codepair sequence.
+    1 bit - Multi-codepair reference. When set it means that the data contains the contents
+            of the specific code in the dictionary and all those following it until a stop
+            bit is encountered.
+    Shifting off the low two bits gives the actual code-idx.
+
 
 Compression, data can be optionally compressed using a custom version of LZ compression.
 All data is represented as one or mode "codes", which are essentially indexes into a dictionary.
@@ -319,7 +328,8 @@ The empty string is used to resolve cases where the data cannot efficiently be d
 even number of subsequences. This code are complemented by two bits which are used to represent
 a "continue bit", and a "stop bit". The "stop bit" is used to represent the end of a string,
 and the "continue bit" is used to be able to insert previous emited sequences of pairs, instead
-of just a pair.
+of just a pair. These bits are encoding in the *low* 2 bits of the code, as this means that the
+same representation can be used with both 24/48 bit and 32/64 bit storage.
 
 The end result is that every unique string contained in the compressed blob can be represented
 by a single code and bits. Decoding is recursive, but eventually always hits a code that is in
@@ -327,6 +337,33 @@ the 0..256 range where it stops. For codes that can be represented with 22 bits 
 representation is used for the pairs, and for codes that require up to 30 bits a 64 bit
 representation is used for the pair. Compression for large numbers of small strings is in
 the 3:1 to 4:1 range, but for long strings it tends to be in the 8:1 or 9:1.
+
+Decoding algorithm:
+
+    decode(code)
+        flags= code & 0x3
+        idx= code >> 2
+
+        if the result is < 256
+            output the desired octet
+        if the result is 256
+            output nothing.
+        if the result is > 256
+            if flags & MULTI # MULTI = 2
+                while (1)
+                    lookup the pair entry in the dictionary based on idx.
+                    decode each element of the pair.
+                    if (codeb & STOP) break; # STOP = 1
+                    else increment idx.
+                loop
+            else
+                lookup the pair entry in the dictionary based on idx
+                decode each element of the pair
+            end
+
+NOTE that the MULTI flag will never be set on an 'idx' value < 257, however
+the STOP flag may be set.
+
 
 =head2 EXPORT
 
