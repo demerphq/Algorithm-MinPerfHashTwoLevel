@@ -274,6 +274,14 @@ values represent the dictionary ids of compressed strings, and positive values
 represent offsets into the string buffer. Compressed data is stored in a set of buckets
 which are either 48 or 64 bits wide.
 
+Key-flags: where the hash contains keys of mixed utf8 and latin1 representation this
+section of the file contains 2 bits per key, 0 == binary/latin1, 1= utf8, 2= binary/latin1
+that needs upgrade to utf8 on fetch.
+Val-flags: where the hash contains values of mixed utf8 and latin1 representation this
+section of the file contains 1 bit per key, 0 == binary/latin1, 1= utf8.
+If the values are of the same type, or the keys are of the same type then the flag data
+is encoded in the utf8_flags byte in the header.
+
 Buckets:
 
    I32 xor_val      -> the xor_val for this bucket's h1 lookups (0 means none)
@@ -287,6 +295,8 @@ Buckets:
    U32 v_idx        -> str_len index for the value of this key.
    I32 n1           -> offset to the first or last item with the same k1 as this record.
    I32 n2           -> offset to the first or last item with the same k2 as this record.
+
+Keys are stored in *sorted* order in the file.
 
 Str Len:
 
@@ -364,6 +374,25 @@ Decoding algorithm:
 NOTE that the MULTI flag will never be set on an 'idx' value < 257, however
 the STOP flag may be set.
 
+Hash lookup:
+
+    0. compute the h0 for the key using siphash 1-3 with the files initializer state.
+        (giving: h1 = h0 >> 32; h2 = h0 & 0xFFFFFFFF;)
+    1. compute idx1 = h1 % number_of_buckets;
+    2. find the xor_val for bucket[idx1]
+    3. if the xor_val is zero we are done, the key is not in the hash
+    4. compute idx2:
+        if int(xor_val) < 0
+            idx2 = -xor_val-1
+        else
+            idx2 = INTHASH(h2 ^ xor_val) % n;
+    5. compare the key data associated with bucket[idx2] with the key provided
+    6. if they match return the desired value, otherwise the key is not in the hash.
+
+INTHASH(x) is defined as the following operations on unsigned 32 bit integers:
+        x = ((x >> 16) ^ x) * 0x45d9f3b;
+        x = ((x >> 16) ^ x) * 0x45d9f3b;
+        x = ((x >> 16) ^ x);
 
 =head2 EXPORT
 
