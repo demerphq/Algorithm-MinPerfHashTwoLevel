@@ -117,25 +117,6 @@ grow_alloc(U32 v, U32 prealloc) {
     return v + (1<<17);
 }
 
-static inline
-void
-get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb) {
-    if (1) {
-        /* load the 6 bytes into a single U64 register (hopefully), then split out
-         * the low and high 24 bits */
-        U64 recodeab= *((U64 *)short_codepair);
-        *codea= recodeab & 0xFFFFFF;
-        *codeb= (recodeab >> 24) & 0xFFFFFF;
-    } else {
-        *codea= (short_codepair->codea[0] <<  0)|
-                (short_codepair->codea[1] <<  8)|
-                (short_codepair->codea[2] << 16);
-
-        *codeb= (short_codepair->codeb[0] <<  0)|
-                (short_codepair->codeb[1] <<  8)|
-                (short_codepair->codeb[2] << 16);
-    }
-}
 
 
 void
@@ -155,14 +136,6 @@ set_long_codepair(struct long_codepair *long_codepair, const U32 codea, const U3
     long_codepair->codea= codea;
     long_codepair->codeb= codeb;
 }
-
-
-void
-get_long_codepair(struct long_codepair *long_codepair, U32  * const codea, U32 * const codeb) {
-    *codea= long_codepair->codea;
-    *codeb= long_codepair->codeb;
-}
-
 
 
 U32
@@ -200,15 +173,6 @@ append_codepair_array(struct codepair_array *codepair_array, const U32 codea, co
         croak("too many codepoints!");
     }
     return next;
-}
-
-static inline void
-get_codepair_for_idx(struct codepair_array *codepair_array, U32 id, U32 * const codea, U32 * const codeb) {
-    if (id < MAX_SHORT_CODEPAIR_IDX) {
-        get_short_codepair(codepair_array->short_pairs + (id - FIRST_CODEPAIR_IDX), codea, codeb);
-    } else {
-        get_long_codepair(codepair_array->long_pairs + (id - MAX_SHORT_CODEPAIR_IDX), codea, codeb);
-    }
 }
 
 U32
@@ -593,7 +557,9 @@ trie_lookup_prefix(struct trie *trie, U8 *str, U8 *str_end, U32 *matched_len) {
             case CODE_NONE:
                 croak("CODE_NONE main loop");
         }
-        if (TRACE>1) warn("|lp| state: %8u code: %-5s idx: %8u ch = '%c' v = %8u ns = %8u\n", state, codes[code], idx, ch, value, next_state);
+        if (TRACE>1)
+            warn("|lp| state: %8u code: %-5s idx: %8u ch = '%c' v = %8u ns = %8u\n",
+                    state, codes[code], idx, ch, value, next_state);
         state= next_state;
     }
     if (state) {
@@ -887,7 +853,7 @@ compress_string(struct compressor *compressor, U8 *str, STRLEN len) {
     return CODEPAIR_ENCODE_IDX(CODEPAIR_MULTI_FLAG,first_codepair_id);
 }
 
-#define APPEND_CPIDX(id, idx, buf, buf_end) STMT_START {        \
+#define APPEND_BUF_CPIDX(id, idx, buf, buf_end) STMT_START {        \
     if (idx < EMPTY_CODEPAIR_IDX) {                             \
         if (TRACE>1) warn("|%*s id: %8u idx: %8u append '%c'\n", depth,"", id, idx, idx);\
         **buf= idx;                                             \
@@ -895,75 +861,19 @@ compress_string(struct compressor *compressor, U8 *str, STRLEN len) {
     }                                                           \
 } STMT_END
 
-#define DECODE_CPID(id, buf, buf_end) STMT_START {              \
-    U32 idx= CODEPAIR_IDX(id);                                  \
-    if (idx <= EMPTY_CODEPAIR_IDX) {                            \
-        APPEND_CPIDX(id, idx, buf, buf_end);                    \
-    } else {                                                    \
-        (void)decode_cpid_recursive(aTHX_ codepair_array, id, buf, buf_end, depth+1); \
-    }                                                           \
-} STMT_END
 
-char *
-decode_cpid_recursive(pTHX_ struct codepair_array *codepair_array, U32 code, char **buf, char *buf_end, int depth) {
-    char *buf_start= *buf;
-    while (*buf < buf_end) {
-        U32 idx= CODEPAIR_IDX(code);
-        if (TRACE)
-            warn("|%*s-code: %8u idx: %8u\n", depth, "", code, idx);
-        if (idx <= EMPTY_CODEPAIR_IDX) {
-            APPEND_CPIDX(code, idx, buf, buf_end);
-            break;
-        }
-        else
-        if (idx > codepair_array->next_codepair_id) {
-            croak("idx overflow in decode_cpid_recursive, got code: %u idx: %u max_idx= %u",
-                    code, idx, codepair_array->next_codepair_id);
-        }
-        else {
-            U32 codea, codeb;
-
-            if (CODEPAIR_ID_IS_MULTI(code)) {
-                do {
-                    get_codepair_for_idx(codepair_array, idx, &codea, &codeb);
-                    if (TRACE) {
-                        code= CODEPAIR_ENCODE_IDX(0,idx);
-                        warn("|%*s+code: %8u idx: %8u => codea: %8u (%8u) codeb: %8u (%8u)\n",
-                                depth, "", code, idx, codea, CODEPAIR_IDX(codea), codeb, CODEPAIR_IDX(codeb));
-                    }
-                    DECODE_CPID(codea,buf,buf_end);
-                    DECODE_CPID(codeb,buf,buf_end);
-                    idx++;
-                } while (!CODEPAIR_ID_IS_STOP(codeb));
-                break;
-            } else {
-                get_codepair_for_idx(codepair_array, idx, &codea, &codeb);
-                if (TRACE)
-                    warn("|%*s code: %8u idx: %8u => codea: %8u (%8u) codeb: %8u (%8u)\n",
-                            depth, "", code, idx, codea, CODEPAIR_IDX(codea), codeb, CODEPAIR_IDX(codeb));
-                DECODE_CPID(codea,buf,buf_end);
-                code= codeb;
-                /* continue */
-            }
-        }
-    }
-    if (TRACE && depth == 0)
-        warn("|\n");
-    return buf_start;
-}
-
-#define DECODE_CPID_STACK(code) STMT_START {                    \
+#define DECODE_CPID_INTO_BUF(code) STMT_START {                    \
     U32 idx= CODEPAIR_IDX(code);                                \
     if (idx <= EMPTY_CODEPAIR_IDX) {                            \
-        APPEND_CPIDX(code, idx, buf, buf_end);                  \
+        APPEND_BUF_CPIDX(code, idx, buf, buf_end);                  \
     } else {                                                    \
-        (void)decode_cpid_recursive_stack(aTHX_ codepair_array, code, buf, buf_end, depth+1); \
+        (void)decode_cpid_into_buf(aTHX_ codepair_array, code, buf, buf_end, depth+1); \
     }                                                           \
 } STMT_END
 
 #define MAX_CODESTACK 32
 char *
-decode_cpid_recursive_stack(pTHX_ struct codepair_array *codepair_array, U32 code, char **buf, char *buf_end, int depth) {
+decode_cpid_into_buf(pTHX_ struct codepair_array *codepair_array, U32 code, char **buf, char *buf_end, int depth) {
     char *buf_start= *buf;
     U32 stack[MAX_CODESTACK];
     int top= 0;
@@ -978,7 +888,7 @@ decode_cpid_recursive_stack(pTHX_ struct codepair_array *codepair_array, U32 cod
         if (TRACE)
             warn("|%*s-code: %8u idx: %8u\n", depth, "", code, idx);
         if (idx <= EMPTY_CODEPAIR_IDX) {
-            APPEND_CPIDX(code, idx, buf, buf_end);
+            APPEND_BUF_CPIDX(code, idx, buf, buf_end);
         }
         else
 #if 0
@@ -997,8 +907,8 @@ decode_cpid_recursive_stack(pTHX_ struct codepair_array *codepair_array, U32 cod
                     warn("|%*s+code: %8u idx: %8u => codea: %8u (%8u) codeb: %8u (%8u)\n",
                             depth, "", code, idx, codea, CODEPAIR_IDX(codea), codeb, CODEPAIR_IDX(codeb));
                 }
-                DECODE_CPID_STACK(codea);
-                DECODE_CPID_STACK(codeb);
+                DECODE_CPID_INTO_BUF(codea);
+                DECODE_CPID_INTO_BUF(codeb);
                 idx++;
             } while (!CODEPAIR_ID_IS_STOP(codeb));
         }
@@ -1009,7 +919,7 @@ decode_cpid_recursive_stack(pTHX_ struct codepair_array *codepair_array, U32 cod
                 top--;
                 if (TRACE) warn("|stack overflow - recursing");
                 get_codepair_for_idx(codepair_array, idx, &codea, &code );
-                DECODE_CPID_STACK(codea);
+                DECODE_CPID_INTO_BUF(codea);
             } else {
                 get_codepair_for_idx(codepair_array, idx, &code, stack + top);
             }
@@ -1030,9 +940,101 @@ decode_cpid_len_into_sv(pTHX_ struct codepair_array *codepair_array, U32 id, U32
     SvPOK_on(sv);
     pvc= SvPV_nomg_nolen(sv);
     /* note - after this call pvc no longer points at the start of the string - it points at the end */
-    return decode_cpid_recursive_stack(aTHX_ codepair_array, id, &pvc, pvc + len, 0);
+    return decode_cpid_into_buf(aTHX_ codepair_array, id, &pvc, pvc + len, 0);
 }
 
+#define APPEND_SV_CPIDX(id, idx, SV) STMT_START {               \
+    if (idx < EMPTY_CODEPAIR_IDX) {                             \
+        STRLEN cur= SvCUR(sv)+1;                                \
+        STRLEN len= SvLEN(sv);                                  \
+        if (cur+3 >= len)                                       \
+           sv_grow(sv,cur+16);                                  \
+        *(SvEND(sv))= (char)(idx&0xFF);                         \
+        SvCUR_set(sv,cur);                                      \
+        if (TRACE>1) warn("|%*s id: %8u idx: %8u append '%c'\n", depth,"", id, idx, idx);\
+    }                                                           \
+} STMT_END
+
+
+#define APPEND_CPID_INTO_SV(code) STMT_START {                  \
+    U32 idx= CODEPAIR_IDX(code);                                \
+    if (idx <= EMPTY_CODEPAIR_IDX) {                            \
+        APPEND_SV_CPIDX(code, idx, sv);                         \
+    } else {                                                    \
+        (void)append_cpid_into_sv(aTHX_ codepair_array, code, sv, depth+1); \
+    }                                                           \
+} STMT_END
+
+#define MAX_CODESTACK 32
+char *
+append_cpid_into_sv(pTHX_ struct codepair_array *codepair_array, U32 code, SV *sv, int depth) {
+    U32 stack[MAX_CODESTACK];
+    int top= 0;
+    stack[top]= code;
+    U32 idx;
+
+    while (top >= 0) {
+        code= stack[top--];
+
+        new_code:
+        idx= CODEPAIR_IDX(code);
+        if (TRACE)
+            warn("|%*s-code: %8u idx: %8u\n", depth, "", code, idx);
+        if (idx <= EMPTY_CODEPAIR_IDX) {
+            APPEND_SV_CPIDX(code, idx, sv);
+        }
+        else
+#if 0
+        if (idx > codepair_array->next_codepair_id) {
+            croak("idx overflow in decode_cpid_recursive, got code: %u idx: %u max_idx= %u",
+                    code, idx, codepair_array->next_codepair_id);
+        }
+        else
+#endif
+        if (CODEPAIR_ID_IS_MULTI(code)) {
+            U32 codea, codeb;
+            do {
+                get_codepair_for_idx(codepair_array, idx, &codea, &codeb);
+                if (TRACE) {
+                    code= CODEPAIR_ENCODE_IDX(0,idx);
+                    warn("|%*s+code: %8u idx: %8u => codea: %8u (%8u) codeb: %8u (%8u)\n",
+                            depth, "", code, idx, codea, CODEPAIR_IDX(codea), codeb, CODEPAIR_IDX(codeb));
+                }
+                APPEND_CPID_INTO_SV(codea);
+                APPEND_CPID_INTO_SV(codeb);
+                idx++;
+            } while (!CODEPAIR_ID_IS_STOP(codeb));
+        }
+        else {
+            top++;
+            if (top>=MAX_CODESTACK) {
+                U32 codea;
+                top--;
+                if (TRACE) warn("|stack overflow - recursing");
+                get_codepair_for_idx(codepair_array, idx, &codea, &code );
+                APPEND_CPID_INTO_SV(codea);
+            } else {
+                get_codepair_for_idx(codepair_array, idx, &code, stack + top);
+            }
+            goto new_code;
+        }
+    }
+    if (TRACE && depth == 0)
+        warn("|\n");
+    return SvPVX(sv);
+}
+
+
+char *
+decode_cpid_into_sv(pTHX_ struct codepair_array *codepair_array, U32 id, SV *sv) {
+    char *ret;
+    sv_grow(sv,32);
+    SvPOK_on(sv);
+    SvCUR_set(sv,0);
+    ret= append_cpid_into_sv(aTHX_ codepair_array, id, sv, 0);
+    *(SvEND(sv))= 0;
+    return ret;
+}
 
 #define CPIDX_CMP(id, idx, buf, buf_end) STMT_START {       \
     if (idx < EMPTY_CODEPAIR_IDX) {                         \

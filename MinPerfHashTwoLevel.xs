@@ -97,6 +97,30 @@ STMT_START {                                                        \
     GET_MOUNT_AND_OBJ_RV(mount_rv);                                 \
 } STMT_END
 
+U8 HEX[16]= {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
+char *
+sv_hex(pTHX_ SV *sv, U8 *buf, STRLEN len) {
+    U8 *pv;
+    U8 *opv;
+    U8 *buf_end= buf + len;
+    STRLEN l;
+    sv_upgrade(sv,SVt_PV);
+    sv_grow(sv,len*2+1);
+    SvPOK_on(sv);
+    SvCUR_set(sv,len*2);
+    opv= pv= (U8 *)SvPVX(sv);
+    while (buf < buf_end) {
+        U8 lo= *buf & 0xF;
+        U8 hi= *buf >> 4;
+        buf++;
+        *pv = HEX[hi]; pv++;
+        *pv = HEX[lo]; pv++;
+    }
+    *pv= 0;
+    return opv;
+}
+
+
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Algorithm::MinPerfHashTwoLevel
 
 BOOT:
@@ -766,6 +790,95 @@ FETCH(self_hv, key_sv)
 }
     OUTPUT:
         RETVAL
+
+void
+Dump(self_hv)
+        HV *self_hv
+    PREINIT:
+        dMY_CXT;
+        struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
+    CODE:
+{
+    dFAST_PROPS;
+    dMOUNT;
+    struct mph_header *mph;
+    SV *tmp1= sv_newmortal();
+    SV *tmp2= sv_newmortal();
+    SV *tmp3= sv_newmortal();
+    SV *tmp4= sv_newmortal();
+    GET_MOUNT_AND_OBJ(self_hv);
+    GET_FAST_PROPS(self_hv);
+
+    mph= obj->header;
+    if (mph->variant != 7) croak("must be variant 7!");
+    warn("--Header--\n");
+    warn("magic_num     : %u\n", mph->magic_num);
+    warn("variant       : %u\n", mph->variant);
+    warn("num_buckets   : %u\n", mph->num_buckets);
+    warn("state_ofs     : 0x%08x\n", mph->state_ofs);
+    warn("table_ofs     : 0x%08x\n", mph->table_ofs);
+    warn("key_flags_ofs : 0x%08x\n", mph->key_flags_ofs);
+    warn("val_flags_ofs : 0x%08x\n", mph->val_flags_ofs);
+    warn("str_buf_ofs   : 0x%08x\n", mph->str_buf_ofs);
+    warn("utf8_flags    : 0x%02x\n", mph->utf8_flags);
+    warn("separator     : 0x%02x (%c)\n", mph->separator, mph->separator);
+    warn("reserved_u16  : 0x%04x\n", mph->reserved_u16);
+    warn("str_len_ofs   : 0x%08x\n", mph->str_len_ofs);
+    warn("codepair_ofs  : 0x%08x\n", mph->codepair_ofs);
+    warn("reserved_u32  : 0x%08x\n", mph->reserved_u32);
+    warn("state         : 0x%s\n", sv_hex(aTHX_ tmp1, STATE_PTR(mph), 4 * sizeof(U64)));
+    warn("---------------------------------------------------------------------\n");
+    if (0){
+        struct mph_triple_bucket *bucket= TRIPLE_BUCKET_PTR(mph);
+        struct mph_triple_bucket *sentinel= bucket + mph->num_buckets;
+        U32 i= 0;
+        warn("[bucket]  xor_val k1_idx k2_idx k3_idx sortix  v_idx     n1     n2\n");
+        for (;bucket < sentinel;bucket++) {
+            warn("[%6u] %+8d %6u %6u %6u %6u %6u %+6d %+6d\n",
+                i++,
+                bucket->xor_val, bucket->k1_idx, bucket->k2_idx, bucket->k3_idx,
+                bucket->sort_index, bucket->v_idx, bucket->n1, bucket->n2);
+        }
+    }
+    if (mph->key_flags_ofs != mph->val_flags_ofs) {
+        warn("key bits not shown\n");
+    }
+    if (mph->val_flags_ofs != mph->str_len_ofs) {
+        warn("key bits not shown\n");
+    }
+    if (0){
+        struct str_len *str_len= STR_LEN_PTR(mph);
+        I32 count= str_len->len;
+        I32 i;
+        warn("---------------------------------------------------------------------\n");
+        for (i=0; i<count;i++) {
+            warn("[%6d] %6d %6d\n",i, str_len[i].ofs, str_len[i].len);
+            if (i) {
+                warn("'%"SVf"'\n", str_len_set_sv_bytes(obj, str_len[i].ofs, str_len[i].len, tmp1));
+            } else {
+                warn("undef\n");
+            }
+        }
+    }
+    if (1){
+        char *flags[4]= {"  ", "! ", "+ ", "+!"};
+        struct codepair_array *cp= &obj->codepair_array;
+        U32 i;
+        warn("---------------------------------------------------------------------\n");
+        for(i=257;i<cp->next_codepair_id;i++) {
+            U32 codea, codeb;
+            get_codepair_for_idx(cp, i, &codea, &codeb);
+            decode_cpid_into_sv(cp, codea, tmp1);
+            decode_cpid_into_sv(cp, codeb, tmp2);
+            pv_pretty(tmp3,SvPVX(tmp1),SvCUR(tmp1),20,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
+            pv_pretty(tmp4,SvPVX(tmp2),SvCUR(tmp2),20,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
+            warn("[%7u] %8u %8u (%6u%s %6u%s) %"SVf" %"SVf"\n",
+                i, codea, codeb, codea>>2,
+                flags[(codea & 3)],codeb>>2, flags[codeb & 3], tmp3, tmp4);
+        }
+    }
+}
+
 
 MODULE = Algorithm::MinPerfHashTwoLevel		PACKAGE = Tie::Hash::MinPerfHashTwoLevel::Mount
 

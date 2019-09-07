@@ -31,9 +31,9 @@ struct mph_header {
     };
     union {
         U64 str_buf_checksum;
-        union {
+        struct {
             U32 codepair_ofs;
-            U32 reserved_u32_1;
+            U32 reserved_u32;
         };
     };
 };

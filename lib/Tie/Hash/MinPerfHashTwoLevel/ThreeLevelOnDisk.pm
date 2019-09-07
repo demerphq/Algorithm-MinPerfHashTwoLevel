@@ -237,10 +237,10 @@ Structure:
     Bucket-table
     Key flags (optional)
     Val flags (optional)
-    String/Length Data
-    Strings (optional)
-    Compressed Data (optional)
-    Checksum
+    |String/Length Data
+    |Strings (optional)
+    |Compressed Data (optional)
+    |Checksum
 
 Header:
 
@@ -386,6 +386,7 @@ Hash lookup:
             idx2 = -xor_val-1
         else
             idx2 = INTHASH(h2 ^ xor_val) % n;
+    4a. Lookup sort index.
     5. compare the key data associated with bucket[idx2] with the key provided
     6. if they match return the desired value, otherwise the key is not in the hash.
 

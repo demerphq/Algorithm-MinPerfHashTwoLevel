@@ -1024,12 +1024,25 @@ _hash_with_state_sv(pTHX_ SV *str_sv, SV *state_sv)
 }
 
 void
-str_len_init(struct str_len_obj *str_len_obj, struct compressor *compressor) {
+str_len_init_pass1(struct str_len_obj *str_len_obj, struct compressor *compressor) {
     Zero(str_len_obj,1,struct str_len_obj);
     str_len_obj->compressed_hv= (HV *)sv_2mortal((SV *)newHV());
     str_len_obj->uncompressed_hv= (HV *)sv_2mortal((SV *)newHV());
     str_len_obj->next= 1; /* we reserve 0 for undef */
     str_len_obj->compressor= compressor;
+}
+
+void
+str_len_init_pass2(struct str_len_obj *str_len_obj, struct str_len *str_len, U32 count) {
+    warn("count was: %d should be: %d\n", str_len_obj->next, count);
+    str_len_obj->count= count;
+    str_len_obj->next= 1;
+    str_len_obj->str_len= (struct str_len *)str_len;
+    /* ofs == 0 is handled specially, and represents undef. We should never
+     * see this value otherwise. */
+    str_len_obj->str_len[0].ofs= 0;
+    /* which means we can be sneaky and store the number of items in the len field */
+    str_len_obj->str_len[0].len= str_len_obj->count;
 }
 
 U32
@@ -1043,20 +1056,31 @@ str_len_add(pTHX_ struct str_len_obj *str_len_obj, struct str_buf *str_buf, char
 
     if (!pv) return 0; /* str_len == 0 is reserved for undef and str_buf=NULL means undef */
 
-    if (flags & MPH_F_IS_KEY) {
-        compress= flags & MPH_F_COMPRESS_KEYS;
-    } else {
-        compress= flags & MPH_F_COMPRESS_VALS;
+    if (flags & (MPH_F_IS_UNCOMPRESSED|MPH_F_IS_COMPRESSED)) {
+        compress= (flags & MPH_F_IS_COMPRESSED);
+        svp= hv_fetch(compress ? str_len_obj->compressed_hv : str_len_obj->uncompressed_hv, pv, len, 1);
     }
-    if (compress) {
-        /* first check the uncompressed bucket to see if we have seen it,
-         * if we have then we use it, if not then we add it to the compressed bucket */
-        svp= hv_fetch(str_len_obj->uncompressed_hv,pv,len,0);
-        if (!svp)
-            svp= hv_fetch(str_len_obj->compressed_hv,pv,len,1);
-    } else {
-        svp= hv_fetch(str_len_obj->uncompressed_hv,pv,len,1);
+    else {
+        if (flags & MPH_F_IS_KEY) {
+            compress= flags & MPH_F_COMPRESS_KEYS;
+        }
+        else {
+            compress= flags & MPH_F_COMPRESS_VALS;
+        }
+
+        if (compress) {
+            /* first check the uncompressed bucket to see if we have seen it,
+             * if we have then we use it, if not then we add it to the compressed bucket */
+            svp= hv_fetch(str_len_obj->uncompressed_hv,pv,len,0);
+            if (svp)
+                compress= 0;
+            else
+                svp= hv_fetch(str_len_obj->compressed_hv,pv,len,1);
+        } else {
+            svp= hv_fetch(str_len_obj->uncompressed_hv,pv,len,1);
+        }
     }
+
     if (!svp) croak("out of memory");
     sv= *svp;
 
@@ -1065,7 +1089,7 @@ str_len_add(pTHX_ struct str_len_obj *str_len_obj, struct str_buf *str_buf, char
             U32 count= str_len_obj->count;
             if (0) printf("str_len adding len %-6u '%.*s'\n",len,20,pv);
             if (next >= count) {
-                croak("too many str_len elements?!");
+                croak("too many str_len elements?! next=%u count=%u",next,count);
                 /* NOT-REACHED */
             }
             if (str_len_obj->longest < len)
@@ -1095,6 +1119,24 @@ str_len_add(pTHX_ struct str_len_obj *str_len_obj, struct str_buf *str_buf, char
         }
         return next;
     }
+}
+
+SV *
+str_len_set_sv_bytes (pTHX_ struct mph_obj *obj, U32 ofs, I32 len, SV *sv) {
+    if (len < 0) {
+        struct codepair_array *codepair_array= &obj->codepair_array;
+        len= -len;
+        sv_grow(sv,len);
+        //warn("|calling decode_cpid(%u) len=%u v_idx=%u", ofs, len, bucket->v_idx);
+        //FIXME: XXX: set utf8 flags properly
+        decode_cpid_len_into_sv(aTHX_ codepair_array, ofs, len, sv);
+        SvPOK_on(sv);
+        SvCUR_set(sv,len);
+    } else {
+        U8 *ptr= ofs ? STR_BUF_PTR(obj->header) + ofs : NULL;
+        sv_setpvn(sv, ptr, len);
+    }
+    return sv;
 }
 
 void str_len_obj_dump(pTHX_ struct str_len_obj *str_len_obj) {
@@ -1220,7 +1262,7 @@ _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* c
         /* absolute worst case, every string component is unique  3 per key + 1 val */
         str_len_rlen= _roundup(sizeof(struct str_len) * 4 * (bucket_count + 1), alignment);
         compressor_init(&compressor);
-        str_len_init(&str_len_objs, &compressor);
+        str_len_init_pass1(&str_len_objs, &compressor);
     }
 
 
@@ -1372,20 +1414,12 @@ RETRY:
         }
     }
     if (variant > 6) {
-        if (!str_len_objs.str_len) { /* first pass */
-            str_len_objs.count= str_len_objs.next; /* one larger than str_count */
-            str_len_objs.next= 1;
-            str_len_objs.str_len= (struct str_len *)(start + head->str_len_ofs);
-            str_len_objs.str_len[0].ofs= 0; /* set ofs and len at once */
-            str_len_objs.str_len[0].len= 0; /* set ofs and len at once */
-            head->str_buf_ofs= head->str_len_ofs + sizeof(struct str_len) * str_len_objs.count;
-
-            str_buf_init(str_buf, start, start + head->str_buf_ofs, start + total_size);
-            str_buf_add_from_sv(aTHX_ str_buf,comment_sv,NULL,0);
-            str_buf_cat_char(aTHX_ str_buf, 0);
-
-            if ((flags & (MPH_F_COMPRESS_KEYS|MPH_F_COMPRESS_VALS)) != (MPH_F_COMPRESS_KEYS|MPH_F_COMPRESS_VALS)) {
-                AV *uncompressed_av= (AV *)sv_2mortal((SV *)newAV());
+        if (!str_len_objs.str_len) { /* finished first pass */
+            AV *compressed_av= (AV *)sv_2mortal((SV *)newAV());
+            AV *uncompressed_av= (AV *)sv_2mortal((SV *)newAV());
+            U32 compressed_count;
+            U32 uncompressed_count;
+            {
 
                 HV *hv= str_len_objs.uncompressed_hv;
                 HE *he;
@@ -1394,30 +1428,96 @@ RETRY:
                 while (he= hv_iternext(hv)) {
                     SV *key= newSVhek(HeKEY_hek(he));
                     av_push(uncompressed_av, key);
+                    hv_delete_ent(str_len_objs.compressed_hv, key, 0, HeHASH(he));
                 }
-                str_count= av_top_index(uncompressed_av)+1;
-                if (debug_more) {
-                    warn("|uncompressed strings: %ld\n",str_count);
-                    warn("|Starting trigram overlap detection.\n");
+                uncompressed_count= av_top_index(uncompressed_av)+1;
+                if (debug_more && uncompressed_count)
+                    warn("|uncompressed strings: %u\n",uncompressed_count);
+            }
+            {
+                HV *hv= str_len_objs.compressed_hv;
+                HE *he;
+                IV str_count;
+                hv_iterinit(hv);
+                while (he= hv_iternext(hv)) {
+                    SV *key= newSVhek(HeKEY_hek(he));
+                    av_push(compressed_av, key);
                 }
+                compressed_count= av_top_index(compressed_av)+1;
+                if (debug_more && compressed_count)
+                    warn("|compressed strings: %u\n",compressed_count);
+            }
+
+            str_len_init_pass2(&str_len_objs, (struct str_len *)(start + head->str_len_ofs),
+                    compressed_count + uncompressed_count + 1);
+
+            head->str_buf_ofs= head->str_len_ofs + sizeof(struct str_len) * str_len_objs.count;
+
+            str_buf_init(str_buf, start, start + head->str_buf_ofs, start + total_size);
+            str_buf_add_from_sv(aTHX_ str_buf,comment_sv,NULL,0);
+            str_buf_cat_char(aTHX_ str_buf, 0);
+
+            if (uncompressed_count) {
+                if (debug_more)
+                    warn("|Using trigram overlap detection to pack uncompressed strings.\n");
 
                 (void)trigram_add_strs_from_av(aTHX_ uncompressed_av, str_buf);
                 if (debug_more)
                     warn("|Adding to str_len structure.\n");
                 /* now add the string to the str_len in alphabetical order
                  * this makes our key tables have pleasing properties */
-                sortsv(AvARRAY(uncompressed_av),str_count,Perl_sv_cmp);
-                for(i = 0 ; i < str_count ; i++ ) {
+                sortsv(AvARRAY(uncompressed_av),uncompressed_count,Perl_sv_cmp);
+                for(i = 0 ; i < uncompressed_count ; i++ ) {
                     SV **svp= av_fetch(uncompressed_av,i,0);
                     SV *sv= *svp;
                     STRLEN len;
                     char *pv= SvPV_nomg(sv,len);
-                    str_len_add(aTHX_ str_len_obj, str_buf, pv, len, flags | MPH_F_IS_KEY);
+                    str_len_add(aTHX_ str_len_obj, str_buf, pv, len, flags | MPH_F_IS_UNCOMPRESSED);
+                }
+            }
+
+            if (compressed_count) {
+                if (debug_more)
+                    warn("|Compressing strings.\n");
+                /* now add the string to the str_len in alphabetical order
+                 * this makes our key tables have pleasing properties */
+                sortsv(AvARRAY(compressed_av),compressed_count,
+                        ((flags & MPH_F_COMPRESS_KEYS)|0) ? Perl_sv_cmp : sv_cmp_len_asc_lex_asc);
+
+                for(i = 0 ; i < compressed_count ; i++ ) {
+                    SV **svp= av_fetch(compressed_av,i,0);
+                    SV *sv= *svp;
+                    STRLEN len;
+                    char *pv= SvPV_nomg(sv,len);
+                    str_len_add(aTHX_ str_len_obj, str_buf, pv, len, flags | MPH_F_IS_COMPRESSED);
                 }
             }
             goto RETRY;
         } /* end first pass */
         else { /* second pass */
+            /* compute n1 and n2
+             *
+             * our data is sorted, and thus we have k1_idx, k2_idx, k3_idx
+             * where k1_idx is repeated over many rows, and k1_idx,k2_idx tuples are repeated over many
+             * rows.
+             *
+             * n1 is a value which represents either: a positive offset to the last row with the
+             * current rows k1_idx, or a negative offset to the first row with the current rows k1_idx.
+             * Only the last row of a sequence has a negative offset. The negative values are computed
+             * as -n-1 allowing '0' to be represeted, Thus singletons are represented as a negative value -1,
+             * which corrects to 0.
+             *
+             * n2 is the same but for the tuple (k1_idx, k2_idx).
+             *
+             * This means that it is O(1) to find both the bounds and the predecessor or successor for
+             * a given k1_idx or (k1_idx,k2_idx) tuple. Which means we can binary search the upper levels
+             * of the hash much more efficiently than searching the whole table.
+             *
+             * By "bounds" I mean that when doing something like $hash->{foo}{bar}{baz} we can find 'foo'
+             * in time proportional to the number of unique items in k1_idx, and from that we know the
+             * bounds to search for 'bar' for, so the search for it becomes proportional to the number
+             * of distinct keys that start with "foo/" not the total table size.
+             */
             struct mph_triple_bucket *first_bucket= (struct mph_triple_bucket *)(table);
             struct mph_triple_bucket *last_bucket= first_bucket + bucket_count - 1;
             struct mph_triple_bucket *bucket;

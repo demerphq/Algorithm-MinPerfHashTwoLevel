@@ -86,13 +86,14 @@ foreach my $i (1..($ENV{LEAK_TEST_COUNT}||1)) {
     warn "-start------------------------------------------------------\n";
     m!perl author_tools/t.pl! and warn $_ for `ps auwx`;
     my $make_time= 0 - time();
-    mph2l_make_file($fn,
-        variant => $variant,
-        source_hash => \%sep_hash,
-        separator => $sep,
-        compress_keys => $ENV{COMPRESS_KEYS},
-        compress_vals => $ENV{COMPRESS_VALS},
-        debug => $ENV{DEBUG});
+    mph2l_make_file(
+        $fn,
+        variant         => $variant,
+        source_hash     => \%sep_hash,
+        separator       => $sep,
+        compress_keys   => $ENV{COMPRESS_KEYS},
+        compress_vals   => $ENV{COMPRESS_VALS},
+        debug           => $ENV{DEBUG});
     $make_time += time();
     warn sprintf "make file took %.0fms\n", $make_time * 1000;
     m!perl author_tools/t.pl! and warn $_ for `ps auwx`;
@@ -106,6 +107,8 @@ tie my %tied_hash, $class,
     validate => 0;
 $tie_time += time();
 warn sprintf "tie took %.0fms\n", $tie_time * 1000;
+
+tied(%tied_hash)->Dump();
 
 
 warn "walking tied hash\n";

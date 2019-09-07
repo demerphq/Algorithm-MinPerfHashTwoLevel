@@ -32,6 +32,9 @@
 #define MPH_F_COMPRESS_KEYS         (1<<19)
 #define MPH_F_COMPRESS_VALS         (1<<20)
 
+#define MPH_F_IS_COMPRESSED         (1<<21)
+#define MPH_F_IS_UNCOMPRESSED       (1<<22)
+
 #define MPH_F_DEBUG                 (1<<30)
 #define MPH_F_DEBUG_MORE            (1<<31)
 
@@ -177,6 +180,7 @@ I32 sv_prefix_cmp3(pTHX_ SV *l_sv, SV *r_sv, SV *r_sv_utf8);
 I32 sv_cmp_hash(pTHX_ SV *a, SV *b);
 
 void trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf *str_buf);
+SV *str_len_set_sv_bytes (pTHX_ struct mph_obj *obj, U32 ofs, I32 len, SV *sv);
 
 
 MPH_STATIC_INLINE void
@@ -200,13 +204,14 @@ sv_set_utf8_flags(pTHX_ SV *sv, const U32 idx, const U8 *flags, const U32 bits, 
 }
 
 MPH_STATIC_INLINE void
-sv_set_from_bucket_extra(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift, const int fast) {
+sv_set_from_bucket_extra(pTHX_ SV *sv, U8 *strs, const U32 ofs, U32 len, const U32 idx, const U8 *flags, const U32 bits, const U8 utf8_default, const U8 utf8_default_shift, const int fast) {
     U8 *ptr;
     U8 is_utf8;
     if (ofs) {
         ptr= (strs) + (ofs);
     } else {
-        ptr= 0;
+        ptr= NULL;
+        len= 0;
         is_utf8= 0;
     }
     /* note that sv_setpvn() will cause the sv to
@@ -232,22 +237,9 @@ sv_set_from_bucket_extra(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, c
 }
 
 MPH_STATIC_INLINE void
-sv_set_from_str_len_idx( pTHX_ SV *got_sv, struct mph_header *mph, const U32 bucket_idx, const U32 str_len_idx ) {
-    U8 *strs= STR_BUF_PTR(mph);
-    U8 *key_flags= KEY_FLAGS_PTR(mph);
-    struct str_len *str_len= STR_LEN_PTR(mph);
-
-    U8 utf8_flags= mph->utf8_flags;
-    str_len+=str_len_idx;
-
-    sv_set_from_bucket_extra(aTHX_ got_sv, strs, str_len->ofs, str_len->len, bucket_idx, key_flags,
-        2, utf8_flags & MPH_KEYS_ARE_SAME_UTF8NESS_MASK, MPH_KEYS_ARE_SAME_UTF8NESS_SHIFT, FAST_SV_CONSTRUCT);
-}
-
-MPH_STATIC_INLINE void
 sv_set_from_bucket(pTHX_ SV *sv, U8 *strs, const U32 ofs, const U32 len, const U32 idx, const U8 *flags,
         const U32 bits, const U8 utf8_default, const U8 utf8_default_shift) {
-    sv_set_from_bucket_extra(aTHX_ sv, strs, ofs, len, idx, flags,bits, utf8_default, utf8_default_shift, 0);
+    sv_set_from_bucket_extra(aTHX_ sv, strs, ofs, len, idx, flags, bits, utf8_default, utf8_default_shift, 0);
 }
 
 MPH_STATIC_INLINE

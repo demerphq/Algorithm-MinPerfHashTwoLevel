@@ -142,9 +142,6 @@ struct compressor {
 U32 codepair_array_size(struct codepair_array *codepair_array);
 void set_short_codepair(struct short_codepair *short_codepair, const U32 codea, const U32 codeb);
 void set_long_codepair(struct long_codepair *long_codepair, const U32 codea, const U32 codeb);
-static inline void get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb);
-static inline void get_long_codepair(struct long_codepair *long_codepair, U32  * const codea, U32 * const codeb);
-static inline void get_codepair_for_idx(struct codepair_array *codepair_array, U32 id, U32 * const codea, U32 * const codeb);
 
 U32 append_long_codepair_array(struct codepair_array *codepair_array, const U32 codea, const U32 codeb);
 U32 append_short_codepair_array(struct codepair_array *codepair_array, const U32 codea, const U32 codeb);
@@ -176,6 +173,44 @@ U32 compress_string(struct compressor *compressor, U8 *str, STRLEN len);
 char * decode_cpid_recursive(pTHX_ struct codepair_array *codepair_array, U32 id, char **buf, char *buf_end, int depth);
 char * decode_cpid_len_into_sv(pTHX_ struct codepair_array *codepair_array, U32 id, U32 len, SV *sv);
 int cpid_cmp_pv_recursive_stack(pTHX_ struct codepair_array *codepair_array, U32 code, char **buf, char *buf_end, int depth);
+char * decode_cpid_into_sv(pTHX_ struct codepair_array *codepair_array, U32 id, SV *sv);
+
+static inline
+void
+get_short_codepair(struct short_codepair *short_codepair, U32 *codea, U32 *codeb) {
+    if (1) {
+        /* load the 6 bytes into a single U64 register (hopefully), then split out
+         * the low and high 24 bits */
+        U64 recodeab= *((U64 *)short_codepair);
+        *codea= recodeab & 0xFFFFFF;
+        *codeb= (recodeab >> 24) & 0xFFFFFF;
+    } else {
+        *codea= (short_codepair->codea[0] <<  0)|
+                (short_codepair->codea[1] <<  8)|
+                (short_codepair->codea[2] << 16);
+
+        *codeb= (short_codepair->codeb[0] <<  0)|
+                (short_codepair->codeb[1] <<  8)|
+                (short_codepair->codeb[2] << 16);
+    }
+}
+
+static inline
+void
+get_long_codepair(struct long_codepair *long_codepair, U32  * const codea, U32 * const codeb) {
+    *codea= long_codepair->codea;
+    *codeb= long_codepair->codeb;
+}
+
+static inline void
+get_codepair_for_idx(struct codepair_array *codepair_array, U32 id, U32 * const codea, U32 * const codeb) {
+    if (id < MAX_SHORT_CODEPAIR_IDX) {
+        get_short_codepair(codepair_array->short_pairs + (id - FIRST_CODEPAIR_IDX), codea, codeb);
+    } else {
+        get_long_codepair(codepair_array->long_pairs + (id - MAX_SHORT_CODEPAIR_IDX), codea, codeb);
+    }
+}
+
 
 #endif
 
