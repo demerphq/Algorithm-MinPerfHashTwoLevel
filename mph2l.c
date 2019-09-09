@@ -1034,7 +1034,6 @@ str_len_init_pass1(pTHX_ struct str_len_obj *str_len_obj, struct compressor *com
 
 void
 str_len_init_pass2(pTHX_ struct str_len_obj *str_len_obj, struct str_len *str_len, U32 count) {
-    warn("count was: %d should be: %d\n", str_len_obj->next, count);
     str_len_obj->count= count;
     str_len_obj->next= 1;
     str_len_obj->str_len= (struct str_len *)str_len;
