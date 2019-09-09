@@ -108,7 +108,13 @@ tie my %tied_hash, $class,
 $tie_time += time();
 warn sprintf "tie took %.0fms\n", $tie_time * 1000;
 
-tied(%tied_hash)->Dump();
+my $flags=0;
+$flags |= 1 if $ENV{DUMP_TABLE} || $ENV{DUMP_ALL};
+$flags |= 2 if $ENV{DUMP_FLAGS} || $ENV{DUMP_ALL};
+$flags |= 4 if $ENV{DUMP_STR_LEN} || $ENV{DUMP_ALL};
+$flags |= 8 if $ENV{DUMP_CODEPAIRS} || $ENV{DUMP_ALL};
+
+tied(%tied_hash)->Dump($flags);
 
 
 warn "walking tied hash\n";

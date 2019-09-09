@@ -505,6 +505,13 @@ trie_insert(struct trie *trie, U8 *str, STRLEN len, U32 value, U32 debug) {
         trie->max_len= len;
 }
 
+#define HANDLE_SIMPLE_VALUE(vexpr) do {                             \
+    if (vexpr) {                                                    \
+        *matched_len= str_ptr - str;                                \
+        value= vexpr;                                               \
+    }                                                               \
+} while(0)
+
 U32
 trie_lookup_prefix(struct trie *trie, U8 *str, U8 *str_end, U32 *matched_len) {
     U32 state= trie->first_state;
@@ -533,10 +540,7 @@ trie_lookup_prefix(struct trie *trie, U8 *str, U8 *str_end, U32 *matched_len) {
             }
             case CODE_SMALL:{
                 struct small_state *small= trie->small_state + idx;
-                if (small->value) {
-                    *matched_len= str_ptr - str;
-                    value= small->value;
-                }
+                HANDLE_SIMPLE_VALUE(small->value);
                 switch (small->key_count & 0x3) {
                     case 3: if(small->keys[2] == ch) { next_state= small->trans[2]; break; }
                     case 2: if(small->keys[1] == ch) { next_state= small->trans[1]; break; }
@@ -547,10 +551,7 @@ trie_lookup_prefix(struct trie *trie, U8 *str, U8 *str_end, U32 *matched_len) {
             }
             case CODE_FULL: {
                 struct full_state *full= trie->full_state + idx;
-                if (full->value) {
-                    *matched_len= str_ptr - str;
-                    value= full->value;
-                }
+                HANDLE_SIMPLE_VALUE(full->value);
                 next_state= full->trans[ch];
                 break;
             }
@@ -570,18 +571,12 @@ trie_lookup_prefix(struct trie *trie, U8 *str, U8 *str_end, U32 *matched_len) {
             case CODE_MONO: break;
             case CODE_SMALL: {
                 struct small_state *small= trie->small_state + idx;
-                if (small->value) {
-                    *matched_len= str_ptr - str;
-                    value= small->value;
-                }
+                HANDLE_SIMPLE_VALUE(small->value);
                 break;
             }
             case CODE_FULL: {
                 struct full_state *full= trie->full_state + idx;
-                if (full->value) {
-                    *matched_len= str_ptr - str;
-                    value= full->value;
-                }
+                HANDLE_SIMPLE_VALUE(full->value);
                 break;
             }
             case CODE_NONE:
@@ -601,14 +596,15 @@ trie_lookup_prefix(struct trie *trie, U8 *str, U8 *str_end, U32 *matched_len) {
         U32 codeb_length;                                                   \
         U32 codeb;                                                          \
         U32 this_length;                                                    \
-        if (TRACE>1) warn("|codea=%8u\n",codea);                           \
+        if (TRACE>1) warn("|codea=%8u\n",codea);                            \
         codeb= trie_lookup_prefix(trie, str_ptr, str_end, &codeb_length);   \
         this_length= codea_length + codeb_length;                           \
-        if ( this_length >= best_length ) {                                 \
+        if ( this_length > best_length ) { \
             best_length= this_length;                                       \
             best_codea= codea;                                              \
             best_codeb= codeb;                                              \
             if (TRACE>1) warn("|codea= %8u codeb=%8u len:%8u (best)\n", codea, codeb, codea_length + codeb_length);\
+            if (len==this_length) goto done;                                \
         } else {                                                            \
             if (TRACE>1) warn("|codea= %8u codeb=%8u len:%8u\n",codea, codeb, codea_length + codeb_length);\
         }                                                                   \
@@ -624,13 +620,13 @@ trie_lookup_prefix2(struct trie *trie, U8 *str, U8 *str_end, U32 *codeb, U32 *pa
     U32 best_codeb= CODEPAIR_ENCODE_IDX(0,EMPTY_CODEPAIR_IDX);
     U32 best_length= 0;
     U32 state= trie->first_state;
+    U32 len= str_end - str;
 
     if (TRACE>1) {
-        int len= str_end - str;
-        warn("|trie_lookup_prefix2: '%.*s' (len:%8u)\n", len, str, len);
+        warn("|trie_lookup_prefix2: '%.*s' (len:%8u)\n", (int)len, str, len);
     }
 
-    for ( str_ptr= str ; state && str_ptr < str_end; str_ptr++ ) {
+    for ( str_ptr= str ; state && str_ptr < str_end && best_length < len; str_ptr++ ) {
         U32 idx= GET_IDX(state);
         U32 code= GET_CODE(state);
         U32 ch= *str_ptr;
@@ -685,6 +681,7 @@ trie_lookup_prefix2(struct trie *trie, U8 *str, U8 *str_end, U32 *codeb, U32 *pa
         if (TRACE>1) warn("|lup2| state: %8u code: %-5s idx: %8u bca: %8u bcb: %8u bl: %8u\n",
                 state, codes[code], idx, best_codea, best_codeb, best_length);
     }
+    done:
     if (TRACE>1) warn("|lup2| return %8u.%8u len:%8u\n", best_codea, best_codeb, best_length);
     *codeb= best_codeb;
     *pair_length= best_length;

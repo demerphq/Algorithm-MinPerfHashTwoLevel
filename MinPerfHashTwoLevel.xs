@@ -792,8 +792,9 @@ FETCH(self_hv, key_sv)
         RETVAL
 
 void
-Dump(self_hv)
+Dump(self_hv,flags)
         HV *self_hv
+        U32 flags
     PREINIT:
         dMY_CXT;
         struct sv_with_hash *keyname_sv= MY_CXT.keyname_sv;
@@ -828,7 +829,7 @@ Dump(self_hv)
     warn("reserved_u32  : 0x%08x\n", mph->reserved_u32);
     warn("state         : 0x%s\n", sv_hex(aTHX_ tmp1, STATE_PTR(mph), 4 * sizeof(U64)));
     warn("---------------------------------------------------------------------\n");
-    if (0){
+    if (flags & (1<<0)) {
         struct mph_triple_bucket *bucket= TRIPLE_BUCKET_PTR(mph);
         struct mph_triple_bucket *sentinel= bucket + mph->num_buckets;
         U32 i= 0;
@@ -840,41 +841,54 @@ Dump(self_hv)
                 bucket->sort_index, bucket->v_idx, bucket->n1, bucket->n2);
         }
     }
-    if (mph->key_flags_ofs != mph->val_flags_ofs) {
-        warn("key bits not shown\n");
+    if (flags & (1<<1)) {
+        if (mph->key_flags_ofs != mph->val_flags_ofs) {
+            warn("key bits not shown\n");
+        }
+        if (mph->val_flags_ofs != mph->str_len_ofs) {
+            warn("key bits not shown\n");
+        }
     }
-    if (mph->val_flags_ofs != mph->str_len_ofs) {
-        warn("key bits not shown\n");
-    }
-    if (0){
+    if (flags & (1<<2)){
         struct str_len *str_len= STR_LEN_PTR(mph);
         I32 count= str_len->len;
         I32 i;
         warn("---------------------------------------------------------------------\n");
         for (i=0; i<count;i++) {
-            warn("[%6d] %6d %6d\n",i, str_len[i].ofs, str_len[i].len);
             if (i) {
-                warn("'%"SVf"'\n", str_len_set_sv_bytes(obj, str_len[i].ofs, str_len[i].len, tmp1));
+                str_len_set_sv_bytes(obj, str_len[i].ofs, str_len[i].len, tmp1);
+                pv_pretty(tmp3,SvPVX(tmp1),SvCUR(tmp1),70,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
             } else {
-                warn("undef\n");
+                sv_setpvs(tmp3,"undef");
             }
+            warn("str_len:%6d ofs:%8u len:%7d %"SVf"\n",i, str_len[i].ofs, str_len[i].len, tmp3);
         }
     }
-    if (1){
+    if (flags & (1<<3)){
         char *flags[4]= {"  ", "! ", "+ ", "+!"};
         struct codepair_array *cp= &obj->codepair_array;
         U32 i;
         warn("---------------------------------------------------------------------\n");
-        for(i=257;i<cp->next_codepair_id;i++) {
+        warn("num_codepairs: %u\n", cp->next_codepair_id);
+        for(i= 257; i < cp->next_codepair_id ; i++) {
             U32 codea, codeb;
             get_codepair_for_idx(cp, i, &codea, &codeb);
             decode_cpid_into_sv(cp, codea, tmp1);
             decode_cpid_into_sv(cp, codeb, tmp2);
             pv_pretty(tmp3,SvPVX(tmp1),SvCUR(tmp1),20,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
             pv_pretty(tmp4,SvPVX(tmp2),SvCUR(tmp2),20,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
-            warn("[%7u] %8u %8u (%6u%s %6u%s) %"SVf" %"SVf"\n",
-                i, codea, codeb, codea>>2,
-                flags[(codea & 3)],codeb>>2, flags[codeb & 3], tmp3, tmp4);
+            warn("idx: %7u codea:%8u:%6u%s codeb:%8u:%6u%s len: %4lu | %"SVf" %"SVf"\n",
+                i,
+                codea,
+                codea >> 2,
+                flags[codea & 3],
+                codeb,
+                codeb >> 2,
+                flags[codeb & 3],
+                SvCUR(tmp1) + SvCUR(tmp2),
+                tmp3,
+                tmp4
+            );
         }
     }
 }
