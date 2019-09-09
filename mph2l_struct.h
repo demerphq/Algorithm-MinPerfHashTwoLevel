@@ -1,43 +1,12 @@
-#define U64 U64TYPE
-#include "trie2.h"
+#ifndef MPH2L_STRUCT_H
+#define MPH2L_STRUCT_H
+
+#include "mph2l_basic.h"
 
 struct sv_with_hash {
     SV *sv;
     U32 hash;
 };
-
-struct mph_header {
-    U32 magic_num;
-    U32 variant;
-    U32 num_buckets;
-    U32 state_ofs;
-
-    U32 table_ofs;
-    U32 key_flags_ofs;
-    U32 val_flags_ofs;
-    U32 str_buf_ofs;
-
-    union {
-        U64 table_checksum;
-        U64 general_flags;
-        union {
-            struct {
-                U8 utf8_flags;
-                U8 separator;
-                U16 reserved_u16;
-                U32 str_len_ofs;
-            };
-        };
-    };
-    union {
-        U64 str_buf_checksum;
-        struct {
-            U32 codepair_ofs;
-            U32 reserved_u32;
-        };
-    };
-};
-
 
 #define BUCKET_FIELDS           \
     union {                     \
@@ -131,3 +100,5 @@ struct mph_multilevel {
     I32 k1_idx;
     I32 k2_idx;
 };
+
+#endif

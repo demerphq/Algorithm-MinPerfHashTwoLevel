@@ -156,11 +156,11 @@
 #define DEBUGF 0
 #define FAST_SV_CONSTRUCT 0
 
+#include "trie2.h"
 #include "mph2l_struct.h"
 #include "mph2l_keys.h"
 #include "str_buf.h"
 #include "triple.h"
-#include "trie2.h"
 
 UV _compute_xs(pTHX_ HV *self_hv, struct sv_with_hash *keyname_sv);
 SV *_seed_state(pTHX_ SV *base_seed_sv);
