@@ -166,8 +166,8 @@ UV _compute_xs(pTHX_ HV *self_hv, struct sv_with_hash *keyname_sv);
 SV *_seed_state(pTHX_ SV *base_seed_sv);
 UV _hash_with_state_sv(pTHX_ SV *str_sv, SV *state_sv);
 IV _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* comment_sv, U32 flags, AV *buckets_av, struct sv_with_hash *keyname_sv, AV * keys_av, SV *separator_sv);
-SV *_mount_file(SV *file_sv, SV *error_sv, U32 flags);
-void _mph_munmap(struct mph_obj *obj);
+SV *_mount_file(pTHX_ SV *file_sv, SV *error_sv, U32 flags);
+void _mph_munmap(pTHX_ struct mph_obj *obj);
 int lookup_bucket(pTHX_ struct mph_header *mph, U32 index, SV *key_sv, SV *val_sv);
 int lookup_key(pTHX_ struct mph_header *mph, SV *key_sv, SV *val_sv);
 
@@ -233,7 +233,7 @@ sv_set_from_bucket_extra(pTHX_ SV *sv, U8 *strs, const U32 ofs, U32 len, const U
         sv_setpvn((sv),ptr,len);
     }
     if (ptr)
-        sv_set_utf8_flags(sv, idx, flags, bits, utf8_default, utf8_default_shift);
+        sv_set_utf8_flags(aTHX_ sv, idx, flags, bits, utf8_default, utf8_default_shift);
 }
 
 MPH_STATIC_INLINE void
@@ -261,12 +261,12 @@ cpid_eq_sv(pTHX_ struct codepair_array *codepair_array, const U32 id, const U32 
 
 MPH_STATIC_INLINE
 int
-str_len_pv_eq(struct codepair_array *codepair_array, struct str_len *str_len, U8 *strs, U32 str_len_idx, char *want_pv, STRLEN want_len) {
+str_len_pv_eq(pTHX_ struct codepair_array *codepair_array, struct str_len *str_len, U8 *strs, U32 str_len_idx, char *want_pv, STRLEN want_len) {
     U32 got_ofs= str_len[str_len_idx].ofs;
     I32 got_len= str_len[str_len_idx].len;
     if (got_len < 0) {
         got_len= -got_len;
-        return cpid_eq_pvn(codepair_array, got_ofs, got_len, want_pv, want_len);
+        return cpid_eq_pvn(aTHX_ codepair_array, got_ofs, got_len, want_pv, want_len);
     } else {
         U8 *got_pv= strs + got_ofs;
         return got_len == want_len && memEQ(want_pv, got_pv, want_len);
@@ -275,10 +275,10 @@ str_len_pv_eq(struct codepair_array *codepair_array, struct str_len *str_len, U8
 
 MPH_STATIC_INLINE
 int
-str_len_sv_eq(struct codepair_array *codepair_array, struct str_len *str_len, U8 *strs, U32 str_len_idx, SV *sv) {
+str_len_sv_eq(pTHX_ struct codepair_array *codepair_array, struct str_len *str_len, U8 *strs, U32 str_len_idx, SV *sv) {
     STRLEN want_len;
     U8 *want_pv= SvPV_nomg(sv,want_len);
-    return str_len_pv_eq(codepair_array, str_len, strs, str_len_idx, want_pv, want_len);
+    return str_len_pv_eq(aTHX_ codepair_array, str_len, strs, str_len_idx, want_pv, want_len);
 }
 
 

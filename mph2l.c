@@ -352,7 +352,7 @@ mph_mmap(pTHX_ char *file, struct mph_obj *obj, SV *error, U32 flags) {
 }
 
 void
-_mph_munmap(struct mph_obj *obj)
+_mph_munmap(pTHX_ struct mph_obj *obj)
 {
     munmap(obj->header,obj->bytes);
 }
@@ -1024,7 +1024,7 @@ _hash_with_state_sv(pTHX_ SV *str_sv, SV *state_sv)
 }
 
 void
-str_len_init_pass1(struct str_len_obj *str_len_obj, struct compressor *compressor) {
+str_len_init_pass1(pTHX_ struct str_len_obj *str_len_obj, struct compressor *compressor) {
     Zero(str_len_obj,1,struct str_len_obj);
     str_len_obj->compressed_hv= (HV *)sv_2mortal((SV *)newHV());
     str_len_obj->uncompressed_hv= (HV *)sv_2mortal((SV *)newHV());
@@ -1033,7 +1033,7 @@ str_len_init_pass1(struct str_len_obj *str_len_obj, struct compressor *compresso
 }
 
 void
-str_len_init_pass2(struct str_len_obj *str_len_obj, struct str_len *str_len, U32 count) {
+str_len_init_pass2(pTHX_ struct str_len_obj *str_len_obj, struct str_len *str_len, U32 count) {
     warn("count was: %d should be: %d\n", str_len_obj->next, count);
     str_len_obj->count= count;
     str_len_obj->next= 1;
@@ -1262,7 +1262,7 @@ _packed_xs(pTHX_ SV *buf_sv, U32 variant, SV *buf_length_sv, SV *state_sv, SV* c
         /* absolute worst case, every string component is unique  3 per key + 1 val */
         str_len_rlen= _roundup(sizeof(struct str_len) * 4 * (bucket_count + 1), alignment);
         compressor_init(&compressor);
-        str_len_init_pass1(&str_len_objs, &compressor);
+        str_len_init_pass1(aTHX_ &str_len_objs, &compressor);
     }
 
 
@@ -1339,7 +1339,7 @@ RETRY:
     pass++;
     if (debug_more) warn("|pass #%d\n",pass);
     if (variant < 7) {
-        str_buf_init(str_buf, start, start + head->str_buf_ofs, start + total_size);
+        str_buf_init(aTHX_ str_buf, start, start + head->str_buf_ofs, start + total_size);
         str_buf_add_from_sv(aTHX_ str_buf,comment_sv,NULL,0);
         str_buf_cat_char(aTHX_ str_buf,0);
     } else {
@@ -1448,12 +1448,12 @@ RETRY:
                     warn("|compressed strings: %u\n",compressed_count);
             }
 
-            str_len_init_pass2(&str_len_objs, (struct str_len *)(start + head->str_len_ofs),
+            str_len_init_pass2(aTHX_ &str_len_objs, (struct str_len *)(start + head->str_len_ofs),
                     compressed_count + uncompressed_count + 1);
 
             head->str_buf_ofs= head->str_len_ofs + sizeof(struct str_len) * str_len_objs.count;
 
-            str_buf_init(str_buf, start, start + head->str_buf_ofs, start + total_size);
+            str_buf_init(aTHX_ str_buf, start, start + head->str_buf_ofs, start + total_size);
             str_buf_add_from_sv(aTHX_ str_buf,comment_sv,NULL,0);
             str_buf_cat_char(aTHX_ str_buf, 0);
 
@@ -1564,7 +1564,7 @@ RETRY:
                 }
             }
             if (debug_more)
-                str_len_obj_dump(str_len_obj);
+                str_len_obj_dump(aTHX_ str_len_obj);
 
         } /*second pass*/
     } /* variant=6 handling */
@@ -1577,8 +1577,8 @@ RETRY:
         struct codepair_array_frozen *frozen;
 
         codepair_frozen_size= codepair_array_freeze(&compressor.codepair_array,NULL,debug);
-        sblen= str_buf_len(str_buf);
-        frozen_pv= str_buf_aligned_alloc(str_buf,codepair_frozen_size,8);
+        sblen= str_buf_len(aTHX_ str_buf);
+        frozen_pv= str_buf_aligned_alloc(aTHX_ str_buf,codepair_frozen_size,8);
         if (!frozen_pv) {
             str_buf_dump(aTHX_ str_buf);
             croak("not enough memory? need codepair_frozen_size: %u str_rlen: %u", codepair_frozen_size, str_rlen);
@@ -1594,7 +1594,7 @@ RETRY:
 
     if (debug_more) {
         warn("|str_len.next: %d str_buf.len: %d with codepairs: %d\n",
-                str_len_obj->next, sblen, str_buf_len(str_buf));
+                str_len_obj->next, sblen, str_buf_len(aTHX_ str_buf));
         warn("|state_ofs= %u\n", head->state_ofs);
         warn("|table_ofs= %u\n", head->table_ofs);
         warn("|key_flags_ofs= %u\n", head->key_flags_ofs);
@@ -1610,7 +1610,7 @@ RETRY:
 
 
 SV *
-_mount_file(SV *file_sv, SV *error_sv, U32 flags)
+_mount_file(pTHX_ SV *file_sv, SV *error_sv, U32 flags)
 {
     struct mph_obj obj;
     STRLEN file_len;
@@ -1680,7 +1680,7 @@ trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf* str_buf ) {
 
         hv_clear(tmp_hv);
         if (str_len < 3) {
-            pos= str_buf_add_from_pvn(str_buf,str_pv,str_len,MPH_F_NO_DEDUPE);
+            pos= str_buf_add_from_pvn(aTHX_ str_buf,str_pv,str_len,MPH_F_NO_DEDUPE);
             sv_setiv(*cached_svp, pos);
             continue;
         } else {
@@ -1784,7 +1784,7 @@ trigram_add_strs_from_av(pTHX_ AV *uncompressed_av, struct str_buf* str_buf ) {
           do_add:
             idx_sv= newSViv(i);
 
-            pos= str_buf_add_from_pvn(str_buf,str_pv,str_len,MPH_F_NO_DEDUPE);
+            pos= str_buf_add_from_pvn(aTHX_ str_buf,str_pv,str_len,MPH_F_NO_DEDUPE);
             sv_setiv(*cached_svp,pos);
 
             hv_iterinit(tmp_hv);

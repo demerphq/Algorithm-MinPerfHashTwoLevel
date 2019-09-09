@@ -291,7 +291,7 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
         if (
             ml->k1_idx == bucket->k1_idx &&
             ml->k2_idx == bucket->k2_idx &&
-            str_len_sv_eq(codepair_array, str_len, strs, bucket->k3_idx, leaf_sv)
+            str_len_sv_eq(aTHX_ codepair_array, str_len, strs, bucket->k3_idx, leaf_sv)
         ) {
             foundit =1;
         }
@@ -316,9 +316,9 @@ triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *
                 (int)len3, pv3);
 
         if (
-            str_len_pv_eq(codepair_array, str_len, strs, bucket->k1_idx, full_key_pv, len1) &&
-            str_len_pv_eq(codepair_array, str_len, strs, bucket->k2_idx, pv2, len2) &&
-            str_len_pv_eq(codepair_array, str_len, strs, bucket->k3_idx, pv3, len3)
+            str_len_pv_eq(aTHX_ codepair_array, str_len, strs, bucket->k1_idx, full_key_pv, len1) &&
+            str_len_pv_eq(aTHX_ codepair_array, str_len, strs, bucket->k2_idx, pv2, len2) &&
+            str_len_pv_eq(aTHX_ codepair_array, str_len, strs, bucket->k3_idx, pv3, len3)
         ) {
             foundit= 1;
         }

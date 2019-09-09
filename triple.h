@@ -4,8 +4,8 @@ IV triple_find_first_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV 
 IV triple_find_last_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, IV l, IV r);
 IV triple_find_first_last_prefix(pTHX_ struct mph_obj *obj, SV *p1_sv, SV *p2_sv, SV *p3_sv, IV l, IV r, IV *last);
 
-void triple_set_val(struct mph_obj *obj, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *val_sv);
-void triple_set_key(struct mph_obj *obj, U32 str_len_idx, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *key_sv);
+void triple_set_val(pTHX_ struct mph_obj *obj, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *val_sv);
+void triple_set_key(pTHX_ struct mph_obj *obj, U32 str_len_idx, struct mph_triple_bucket *bucket, U32 bucket_idx, SV *key_sv);
 
 
 int triple_lookup_key_pvn(pTHX_ struct mph_obj *obj, struct mph_multilevel *ml, SV *full_key_sv, U8 *full_key_pv, STRLEN full_key_len, SV *val_sv, SV *leaf_sv);

@@ -428,7 +428,7 @@ NEXTKEY(self_hv,...)
      * which is why we can pass the same var into both the latin1 and utf8 slot */
 
     /* if this key does not match */
-    if (sv_prefix_cmp3(nextkey_sv,this_prefix_sv,this_prefix_sv))
+    if (sv_prefix_cmp3(aTHX_ nextkey_sv,this_prefix_sv,this_prefix_sv))
         XSRETURN_UNDEF;
 
     nextkey_pv= SvPV_nomg(nextkey_sv, nextkey_len);
@@ -718,7 +718,7 @@ FETCH(self_hv, key_sv)
             if (idx>=0) {
                 found_it= 1;
                 if (RETVAL)
-                    triple_set_val(obj, NULL, idx, RETVAL);
+                    triple_set_val(aTHX_ obj, NULL, idx, RETVAL);
             }
         }
     } else {
@@ -856,7 +856,7 @@ Dump(self_hv,flags)
         warn("---------------------------------------------------------------------\n");
         for (i=0; i<count;i++) {
             if (i) {
-                str_len_set_sv_bytes(obj, str_len[i].ofs, str_len[i].len, tmp1);
+                str_len_set_sv_bytes(aTHX_ obj, str_len[i].ofs, str_len[i].len, tmp1);
                 pv_pretty(tmp3,SvPVX(tmp1),SvCUR(tmp1),70,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
             } else {
                 sv_setpvs(tmp3,"undef");
@@ -868,16 +868,20 @@ Dump(self_hv,flags)
         char *flags[4]= {"  ", "! ", "+ ", "+!"};
         struct codepair_array *cp= &obj->codepair_array;
         U32 i;
+        U32 total_len= 0;
+        U32 used_len= 0;
         warn("---------------------------------------------------------------------\n");
         warn("num_codepairs: %u\n", cp->next_codepair_id);
         for(i= 257; i < cp->next_codepair_id ; i++) {
             U32 codea, codeb;
             get_codepair_for_idx(cp, i, &codea, &codeb);
-            decode_cpid_into_sv(cp, codea, tmp1);
-            decode_cpid_into_sv(cp, codeb, tmp2);
+            decode_cpid_into_sv(aTHX_ cp, codea, tmp1);
+            decode_cpid_into_sv(aTHX_ cp, codeb, tmp2);
+            used_len += 6;
+            total_len += (SvCUR(tmp1)+SvCUR(tmp2));
             pv_pretty(tmp3,SvPVX(tmp1),SvCUR(tmp1),20,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
             pv_pretty(tmp4,SvPVX(tmp2),SvCUR(tmp2),20,NULL,NULL,PERL_PV_PRETTY_QUOTE|PERL_PV_PRETTY_ELLIPSES);
-            warn("idx: %7u codea:%8u:%6u%s codeb:%8u:%6u%s len: %4lu | %"SVf" %"SVf"\n",
+            warn("idx: %7u codea:%8u:%6u%s codeb:%8u:%6u%s len: %4lu Ratio: %6.4f%% | %"SVf" %"SVf"\n",
                 i,
                 codea,
                 codea >> 2,
@@ -886,10 +890,17 @@ Dump(self_hv,flags)
                 codeb >> 2,
                 flags[codeb & 3],
                 SvCUR(tmp1) + SvCUR(tmp2),
+                ((double)used_len)/((double)total_len),
                 tmp3,
                 tmp4
             );
         }
+        warn("total string length: %u total used: %u ratio: %6.4f (%6.4f)\n", 
+        total_len, 
+        used_len,
+        ((double)used_len)/((double)total_len),
+        ((double)total_len)/((double)used_len)
+        );
     }
 }
 
@@ -918,7 +929,7 @@ unmount_file(mount_sv)
     CODE:
 {
     struct mph_obj *obj= (struct mph_obj *)SvPV_nomg_nolen(mount_sv);
-    _mph_munmap(obj);
+    _mph_munmap(aTHX_ obj);
     SvOK_off(mount_sv);
 }
 
