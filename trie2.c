@@ -191,7 +191,7 @@ codepair_array_init(struct codepair_array *codepair_array) {
 U32
 codepair_array_freeze(struct codepair_array *codepair_array, struct codepair_array_frozen *frozen, U32 debug) {
     U32 short_bytes= codepair_array->short_info.next * sizeof(struct short_codepair);
-    U32 long_bytes= codepair_array->long_info.next * sizeof(struct short_codepair);
+    U32 long_bytes= codepair_array->long_info.next * sizeof(struct long_codepair);
     U32 bytes= sizeof(struct codepair_array_frozen) + short_bytes + long_bytes;
 
     if (frozen) {
